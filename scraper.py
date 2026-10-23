@@ -2,8 +2,9 @@ import re
 import time
 import random
 import urllib.parse
+from urllib.parse import urljoin
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -220,157 +221,229 @@ def scrape_fake_jobs_sandbox(driver, search_item):
 
 def scrape_linkedin_public(driver, search_item):
     """
-    Scrapes LinkedIn's public job search interface.
+    Scrapes LinkedIn's public job search interface with infinite-scroll pagination.
+    Keeps scrolling and loading more pages until no new cards appear.
     Filters by posting date using &f_TPR parameter.
     """
     portal_url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "")
     location_query = search_item.get("location", "")
-    
+    max_jobs = config.MAX_JOBS_PER_PORTAL  # 0 = unlimited
+
     time_param = get_linkedin_time_param(config.MAX_AGE_DAYS)
-    
+
     if "linkedin.com/jobs" not in portal_url:
         keywords = urllib.parse.quote(job_title_query)
-        # Always inject India into the location for India-first results
         india_location = location_query if location_query else "India"
         if "india" not in india_location.lower():
             india_location = f"{india_location}, India"
         location_enc = urllib.parse.quote(india_location)
-        url = f"https://www.linkedin.com/jobs/search?keywords={keywords}&location={location_enc}&f_TPR={time_param}"
+        base_url = f"https://www.linkedin.com/jobs/search?keywords={keywords}&location={location_enc}&f_TPR={time_param}"
     else:
-        # Append time filter to given url; also inject India if location missing
-        url = portal_url
-        if "f_TPR" not in url:
-            connector = "&" if "?" in url else "?"
-            url += f"{connector}f_TPR={time_param}"
-        if "india" not in url.lower() and "location" not in url.lower():
-            url += "&location=India"
+        base_url = portal_url
+        if "f_TPR" not in base_url:
+            connector = "&" if "?" in base_url else "?"
+            base_url += f"{connector}f_TPR={time_param}"
+        if "india" not in base_url.lower() and "location" not in base_url.lower():
+            base_url += "&location=India"
 
-    print(f"Scraping LinkedIn Public Jobs (Max Age: {config.MAX_AGE_DAYS} days): {url}")
-    driver.get(url)
-    time.sleep(random.uniform(2.5, 4.5))
-    
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-    time.sleep(1.5)
-    
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    job_cards = soup.find_all("div", class_=re.compile("job-search-card|base-card"))
-    
     results = []
-    print(f"Found {len(job_cards)} potential job card elements on LinkedIn.")
-    
-    for card in job_cards:
+    seen_links = set()
+    page_offset = 0
+    PAGE_SIZE = 25  # LinkedIn loads 25 results per page offset
+
+    print(f"Scraping LinkedIn Public Jobs (Max Age: {config.MAX_AGE_DAYS} days, all pages): {base_url}")
+
+    while True:
+        # LinkedIn pagination uses &start= offset parameter
+        url = f"{base_url}&start={page_offset}"
+        driver.get(url)
+        time.sleep(random.uniform(2.5, 4.0))
+
+        # Scroll down slowly to trigger lazy-loaded cards
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        for _ in range(4):
+            driver.execute_script("window.scrollBy(0, window.innerHeight);")
+            time.sleep(0.8)
+
+        # Click "See more jobs" button if it exists (some pages show it)
         try:
-            title_elem = card.find("h3", class_=re.compile("job-search-card__title|base-search-card__title"))
-            title = title_elem.text.strip() if title_elem else "N/A"
-            
-            company_elem = card.find("h4", class_=re.compile("job-search-card__subtitle|base-search-card__subtitle"))
-            company = company_elem.text.strip() if company_elem else "N/A"
-            
-            loc_elem = card.find("span", class_=re.compile("job-search-card__metadata-item|job-search-card__location"))
-            location = loc_elem.text.strip() if loc_elem else "N/A"
-            
-            link_elem = card.find("a", class_=re.compile("job-search-card__link|base-card__full-link"))
-            apply_link = link_elem["href"] if link_elem else "N/A"
-            if apply_link != "N/A" and "?" in apply_link:
-                apply_link = apply_link.split("?")[0]
-                
-            if job_title_query.lower() not in title.lower():
+            see_more = driver.find_element(By.XPATH, "//button[contains(@aria-label,'See more jobs')]")
+            driver.execute_script("arguments[0].click();", see_more)
+            time.sleep(1.5)
+        except Exception:
+            pass
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        job_cards = soup.find_all("div", class_=re.compile("job-search-card|base-card"))
+
+        new_cards_found = 0
+        for card in job_cards:
+            try:
+                title_elem = card.find("h3", class_=re.compile("job-search-card__title|base-search-card__title"))
+                title = title_elem.text.strip() if title_elem else "N/A"
+
+                company_elem = card.find("h4", class_=re.compile("job-search-card__subtitle|base-search-card__subtitle"))
+                company = company_elem.text.strip() if company_elem else "N/A"
+
+                loc_elem = card.find("span", class_=re.compile("job-search-card__metadata-item|job-search-card__location"))
+                location = loc_elem.text.strip() if loc_elem else "N/A"
+
+                link_elem = card.find("a", class_=re.compile("job-search-card__link|base-card__full-link"))
+                apply_link = link_elem["href"] if link_elem else "N/A"
+                if apply_link != "N/A" and "?" in apply_link:
+                    apply_link = apply_link.split("?")[0]
+
+                # Deduplicate
+                if apply_link in seen_links or apply_link == "N/A":
+                    continue
+                seen_links.add(apply_link)
+                new_cards_found += 1
+
+                if job_title_query.lower() not in title.lower():
+                    continue
+
+                job = {
+                    "portal": "LinkedIn",
+                    "title": title,
+                    "company": company,
+                    "location": location,
+                    "experience": search_item.get("experience", "3-5 years"),
+                    "apply_link": apply_link,
+                    "recruiter_contact": "Refer to Apply Link"
+                }
+                job["job_type"] = classify_job_type(job)
+                results.append(job)
+
+            except Exception as card_err:
+                print(f"Error parsing LinkedIn job card: {card_err}")
                 continue
-                
-            job = {
-                "portal": "LinkedIn",
-                "title": title,
-                "company": company,
-                "location": location,
-                "experience": search_item.get("experience", "3-5 years"),
-                "apply_link": apply_link,
-                "recruiter_contact": "Refer to Apply Link"
-            }
-            job["job_type"] = classify_job_type(job)
-            results.append(job)
-            
-            if len(results) >= config.MAX_JOBS_PER_PORTAL:
-                break
-        except Exception as card_err:
-            print(f"Error parsing LinkedIn job card: {card_err}")
-            continue
-            
+
+        print(f"  LinkedIn page offset={page_offset}: {new_cards_found} new cards, {len(results)} total collected so far.")
+
+        # Stop if no new cards were loaded on this page (end of results)
+        if new_cards_found == 0:
+            print("  LinkedIn: No new cards found. End of results.")
+            break
+
+        # Stop if we hit the user-defined cap (0 = unlimited)
+        if max_jobs > 0 and len(results) >= max_jobs:
+            print(f"  LinkedIn: Reached MAX_JOBS_PER_PORTAL cap ({max_jobs}).")
+            break
+
+        page_offset += PAGE_SIZE
+
+        # Safety limit: LinkedIn public search rarely shows more than 1000 results
+        if page_offset > 975:
+            print("  LinkedIn: Reached maximum offset (1000). Stopping.")
+            break
+
+    print(f"LinkedIn scraping complete. Collected {len(results)} jobs total.")
     return results
+
 
 def scrape_indeed_public(driver, search_item):
     """
-    Scrapes Indeed Jobs. Filters by posting date using &fromage parameter.
+    Scrapes Indeed India jobs across multiple pages using &start= offset pagination.
+    Filters by date using &fromage parameter. Deduplicates results.
     """
     portal_url = search_item.get("portal_url")
     job_title = search_item.get("job_title", "")
     location = search_item.get("location", "")
-    
+    max_jobs = config.MAX_JOBS_PER_PORTAL  # 0 = unlimited
+
     if "indeed.com" not in portal_url:
         q = urllib.parse.quote(job_title)
-        # Use in.indeed.com (India) and force location to India city or India
         india_location = location if location else "India"
         if "india" not in india_location.lower():
             india_location = f"{india_location}, India"
         l = urllib.parse.quote(india_location)
-        url = f"https://in.indeed.com/jobs?q={q}&l={l}&fromage={config.MAX_AGE_DAYS}"
+        base_url = f"https://in.indeed.com/jobs?q={q}&l={l}&fromage={config.MAX_AGE_DAYS}"
     else:
-        url = portal_url
-        # Redirect global indeed to India subdomain
-        url = url.replace("www.indeed.com", "in.indeed.com")
-        if "fromage" not in url:
-            connector = "&" if "?" in url else "?"
-            url += f"{connector}fromage={config.MAX_AGE_DAYS}"
-        
-    print(f"Scraping Indeed Public Jobs (Max Age: {config.MAX_AGE_DAYS} days): {url}")
-    driver.get(url)
-    time.sleep(random.uniform(3.0, 5.0))
-    
-    if "hcaptcha" in driver.page_source.lower() or "cloudflare" in driver.page_source.lower() or "just a moment" in driver.title.lower():
-        print("Warning: Indeed scraping was blocked by Cloudflare/CAPTCHA protection.")
-        return []
-        
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    job_cards = soup.find_all("div", class_=re.compile("job_seen_beacon|slider_container"))
-    
+        base_url = portal_url.replace("www.indeed.com", "in.indeed.com")
+        if "fromage" not in base_url:
+            connector = "&" if "?" in base_url else "?"
+            base_url += f"{connector}fromage={config.MAX_AGE_DAYS}"
+
     results = []
-    print(f"Found {len(job_cards)} potential job cards on Indeed.")
-    
-    for card in job_cards:
-        try:
-            title_elem = card.find("h2", class_=re.compile("jobTitle"))
-            title = title_elem.text.strip() if title_elem else "N/A"
-            
-            company_elem = card.find("span", data_testid="company-name")
-            company = company_elem.text.strip() if company_elem else "N/A"
-            
-            loc_elem = card.find("div", data_testid="text-location")
-            location_val = loc_elem.text.strip() if loc_elem else "N/A"
-            
-            link_elem = card.find("a", class_=re.compile("jcs-JobTitle"))
-            apply_link = "N/A"
-            if link_elem and "href" in link_elem.attrs:
-                apply_link = "https://www.indeed.com" + link_elem["href"]
-            
-            job = {
-                "portal": "Indeed",
-                "title": title,
-                "company": company,
-                "location": location_val,
-                "experience": search_item.get("experience", "Not Specified"),
-                "apply_link": apply_link,
-                "recruiter_contact": "Refer to Apply Link"
-            }
-            job["job_type"] = classify_job_type(job)
-            results.append(job)
-            
-            if len(results) >= config.MAX_JOBS_PER_PORTAL:
-                break
-        except Exception as e:
-            print(f"Error parsing Indeed job card: {e}")
-            continue
-            
+    seen_links = set()
+    PAGE_SIZE = 10   # Indeed shows ~10 jobs per page
+
+    print(f"Scraping Indeed India Jobs (Max Age: {config.MAX_AGE_DAYS} days, all pages): {base_url}")
+
+    for page_num in range(50):  # max 50 pages = 500 jobs safety cap
+        start_offset = page_num * PAGE_SIZE
+        url = f"{base_url}&start={start_offset}"
+
+        driver.get(url)
+        time.sleep(random.uniform(3.0, 5.0))
+
+        # Check for bot blocks
+        if ("hcaptcha" in driver.page_source.lower()
+                or "cloudflare" in driver.page_source.lower()
+                or "just a moment" in driver.title.lower()):
+            print(f"Warning: Indeed page {page_num + 1} was blocked by bot protection. Stopping pagination.")
+            break
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        job_cards = soup.find_all("div", class_=re.compile("job_seen_beacon|slider_container"))
+
+        if not job_cards:
+            print(f"  Indeed page {page_num + 1}: No job cards found. End of results.")
+            break
+
+        new_cards_found = 0
+        for card in job_cards:
+            try:
+                title_elem = card.find("h2", class_=re.compile("jobTitle"))
+                title = title_elem.text.strip() if title_elem else "N/A"
+
+                company_elem = card.find("span", data_testid="company-name")
+                company = company_elem.text.strip() if company_elem else "N/A"
+
+                loc_elem = card.find("div", data_testid="text-location")
+                location_val = loc_elem.text.strip() if loc_elem else "N/A"
+
+                link_elem = card.find("a", class_=re.compile("jcs-JobTitle"))
+                apply_link = "N/A"
+                if link_elem and "href" in link_elem.attrs:
+                    apply_link = "https://in.indeed.com" + link_elem["href"]
+
+                # Deduplicate
+                if apply_link in seen_links or apply_link == "N/A":
+                    continue
+                seen_links.add(apply_link)
+                new_cards_found += 1
+
+                job = {
+                    "portal": "Indeed",
+                    "title": title,
+                    "company": company,
+                    "location": location_val,
+                    "experience": search_item.get("experience", "Not Specified"),
+                    "apply_link": apply_link,
+                    "recruiter_contact": "Refer to Apply Link"
+                }
+                job["job_type"] = classify_job_type(job)
+                results.append(job)
+
+            except Exception as e:
+                print(f"Error parsing Indeed job card: {e}")
+                continue
+
+        print(f"  Indeed page {page_num + 1} (start={start_offset}): {new_cards_found} new cards, {len(results)} total.")
+
+        if new_cards_found == 0:
+            print("  Indeed: No new cards on this page. End of results.")
+            break
+
+        if max_jobs > 0 and len(results) >= max_jobs:
+            print(f"  Indeed: Reached MAX_JOBS_PER_PORTAL cap ({max_jobs}).")
+            break
+
+    print(f"Indeed scraping complete. Collected {len(results)} jobs total.")
     return results
+
 
 def scrape_remoteok(search_item):
     """
@@ -592,73 +665,778 @@ def scrape_upwork_rss(search_item):
         
     return results
 
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW PORTAL SCRAPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def scrape_naukri(driver, search_item):
+    """Scrapes Naukri.com job listings for the given search URL."""
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping Naukri: {url}")
+    driver.get(url)
+    time.sleep(random.uniform(3.0, 5.0))
+
+    # Scroll to load lazy cards
+    for _ in range(3):
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(0.8)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    # Naukri job cards are inside article tags or divs with class 'jobTuple'
+    cards = soup.find_all("article", class_=re.compile("jobTuple|job-container|cust-job-tuple"))
+    if not cards:
+        cards = soup.find_all("div", class_=re.compile("jobTuple|srp-jobtuple-wrapper"))
+
+    results = []
+    seen = set()
+    print(f"  Naukri: Found {len(cards)} cards.")
+
+    for card in cards:
+        try:
+            title_elem = card.find("a", class_=re.compile("title|jobTitle")) or card.find("h2")
+            title = title_elem.text.strip() if title_elem else "N/A"
+
+            company_elem = card.find("a", class_=re.compile("subTitle|comp-name")) or card.find("span", class_=re.compile("company"))
+            company = company_elem.text.strip() if company_elem else "N/A"
+
+            loc_elem = card.find("li", class_=re.compile("location")) or card.find("span", class_=re.compile("location|loc"))
+            location = loc_elem.text.strip() if loc_elem else search_item.get("location", "India")
+
+            link_elem = title_elem if title_elem and title_elem.name == "a" else card.find("a", href=True)
+            apply_link = link_elem["href"] if link_elem and "href" in link_elem.attrs else "N/A"
+            if apply_link != "N/A" and not apply_link.startswith("http"):
+                apply_link = "https://www.naukri.com" + apply_link
+
+            if apply_link in seen:
+                continue
+            seen.add(apply_link)
+
+            if job_title_query and job_title_query not in title.lower():
+                continue
+
+            job = {
+                "portal": "Naukri",
+                "title": title,
+                "company": company,
+                "location": location,
+                "experience": search_item.get("experience", "3-5 years"),
+                "apply_link": apply_link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception as e:
+            continue
+
+    print(f"  Naukri: Collected {len(results)} jobs.")
+    return results
+
+
+def scrape_foundit(driver, search_item):
+    """Scrapes Foundit (formerly Monster India) job listings."""
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping Foundit: {url}")
+    driver.get(url)
+    time.sleep(random.uniform(3.5, 5.5))
+
+    for _ in range(3):
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(0.8)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    cards = soup.find_all("div", class_=re.compile("card-body|job-card|srpResultCardContainer"))
+
+    results = []
+    seen = set()
+    print(f"  Foundit: Found {len(cards)} cards.")
+
+    for card in cards:
+        try:
+            title_elem = card.find("h3") or card.find("a", class_=re.compile("job-title"))
+            title = title_elem.text.strip() if title_elem else "N/A"
+
+            company_elem = card.find("a", class_=re.compile("company")) or card.find("span", class_=re.compile("company"))
+            company = company_elem.text.strip() if company_elem else "N/A"
+
+            loc_elem = card.find("span", class_=re.compile("location")) or card.find("li", class_=re.compile("loc"))
+            location = loc_elem.text.strip() if loc_elem else search_item.get("location", "India")
+
+            link_elem = card.find("a", href=True)
+            apply_link = link_elem["href"] if link_elem else "N/A"
+            if apply_link != "N/A" and not apply_link.startswith("http"):
+                apply_link = "https://www.foundit.in" + apply_link
+
+            if apply_link in seen:
+                continue
+            seen.add(apply_link)
+
+            if job_title_query and job_title_query not in title.lower():
+                continue
+
+            job = {
+                "portal": "Foundit",
+                "title": title,
+                "company": company,
+                "location": location,
+                "experience": search_item.get("experience", "3-5 years"),
+                "apply_link": apply_link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception:
+            continue
+
+    print(f"  Foundit: Collected {len(results)} jobs.")
+    return results
+
+
+def scrape_shine(driver, search_item):
+    """Scrapes Shine.com job listings."""
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping Shine.com: {url}")
+    driver.get(url)
+    time.sleep(random.uniform(3.0, 5.0))
+
+    for _ in range(3):
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(0.7)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    cards = soup.find_all("div", class_=re.compile("job-listing|jobCardWrapper|job_listing"))
+
+    results = []
+    seen = set()
+    print(f"  Shine: Found {len(cards)} cards.")
+
+    for card in cards:
+        try:
+            title_elem = card.find("h3") or card.find("a", class_=re.compile("jobTitle|job-title"))
+            title = title_elem.text.strip() if title_elem else "N/A"
+
+            company_elem = card.find("span", class_=re.compile("company")) or card.find("a", class_=re.compile("comp"))
+            company = company_elem.text.strip() if company_elem else "N/A"
+
+            loc_elem = card.find("span", class_=re.compile("location|city"))
+            location = loc_elem.text.strip() if loc_elem else search_item.get("location", "India")
+
+            link_elem = card.find("a", href=True)
+            apply_link = link_elem["href"] if link_elem else "N/A"
+            if apply_link != "N/A" and not apply_link.startswith("http"):
+                apply_link = "https://www.shine.com" + apply_link
+
+            if apply_link in seen:
+                continue
+            seen.add(apply_link)
+
+            if job_title_query and job_title_query not in title.lower():
+                continue
+
+            job = {
+                "portal": "Shine",
+                "title": title,
+                "company": company,
+                "location": location,
+                "experience": search_item.get("experience", "3-5 years"),
+                "apply_link": apply_link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception:
+            continue
+
+    print(f"  Shine: Collected {len(results)} jobs.")
+    return results
+
+
+def scrape_timesjobs(driver, search_item):
+    """Scrapes TimesJobs job listings."""
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping TimesJobs: {url}")
+    driver.get(url)
+    time.sleep(random.uniform(3.0, 5.5))
+
+    for _ in range(3):
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(0.7)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    cards = soup.find_all("li", class_=re.compile("clearfix|job-bx"))
+
+    results = []
+    seen = set()
+    print(f"  TimesJobs: Found {len(cards)} cards.")
+
+    for card in cards:
+        try:
+            title_elem = card.find("h2") or card.find("a", class_=re.compile("jobTitle"))
+            title = title_elem.text.strip() if title_elem else "N/A"
+
+            company_elem = card.find("h3", class_=re.compile("joblist-comp-name")) or card.find("span", class_=re.compile("company"))
+            company = company_elem.text.strip() if company_elem else "N/A"
+
+            loc_elem = card.find("span", class_=re.compile("srp-skills"))
+            location_ul = card.find("ul", class_=re.compile("top-jd-dtl"))
+            location = "India"
+            if location_ul:
+                lis = location_ul.find_all("li")
+                if len(lis) >= 2:
+                    location = lis[1].text.strip()
+
+            link_elem = card.find("a", href=True)
+            apply_link = link_elem["href"] if link_elem else "N/A"
+
+            if apply_link in seen:
+                continue
+            seen.add(apply_link)
+
+            if job_title_query and job_title_query not in title.lower():
+                continue
+
+            job = {
+                "portal": "TimesJobs",
+                "title": title,
+                "company": company,
+                "location": location,
+                "experience": search_item.get("experience", "3-5 years"),
+                "apply_link": apply_link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception:
+            continue
+
+    print(f"  TimesJobs: Collected {len(results)} jobs.")
+    return results
+
+
+def scrape_glassdoor(driver, search_item):
+    """Scrapes Glassdoor India job listings."""
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping Glassdoor India: {url}")
+    driver.get(url)
+    time.sleep(random.uniform(4.0, 6.0))
+
+    for _ in range(3):
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(0.8)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    cards = soup.find_all("li", class_=re.compile("JobsList_jobListItem|react-job-listing"))
+    if not cards:
+        cards = soup.find_all("div", attrs={"data-test": "jobListing"})
+
+    results = []
+    seen = set()
+    print(f"  Glassdoor: Found {len(cards)} cards.")
+
+    for card in cards:
+        try:
+            title_elem = card.find("a", class_=re.compile("jobTitle|JobCard_jobTitle"))
+            title = title_elem.text.strip() if title_elem else "N/A"
+
+            company_elem = card.find("span", class_=re.compile("EmployerProfile_compactEmployerName|employerName"))
+            company = company_elem.text.strip() if company_elem else "N/A"
+
+            loc_elem = card.find("div", class_=re.compile("JobCard_location|location"))
+            location = loc_elem.text.strip() if loc_elem else search_item.get("location", "India")
+
+            apply_link = "N/A"
+            if title_elem and title_elem.get("href"):
+                href = title_elem["href"]
+                apply_link = f"https://www.glassdoor.co.in{href}" if not href.startswith("http") else href
+
+            if apply_link in seen:
+                continue
+            seen.add(apply_link)
+
+            if job_title_query and job_title_query not in title.lower():
+                continue
+
+            job = {
+                "portal": "Glassdoor",
+                "title": title,
+                "company": company,
+                "location": location,
+                "experience": search_item.get("experience", "3-5 years"),
+                "apply_link": apply_link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception:
+            continue
+
+    print(f"  Glassdoor: Collected {len(results)} jobs.")
+    return results
+
+
+def scrape_wellfound(driver, search_item):
+    """Scrapes Wellfound (AngelList) startup job listings."""
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping Wellfound: {url}")
+    driver.get(url)
+    time.sleep(random.uniform(4.0, 6.0))
+
+    for _ in range(4):
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(1.0)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    cards = soup.find_all("div", class_=re.compile("styles_component|JobListings_jobListings|job-listing"))
+
+    results = []
+    seen = set()
+    print(f"  Wellfound: Found {len(cards)} cards.")
+
+    for card in cards:
+        try:
+            title_elem = card.find("a", class_=re.compile("JobListing_title|title"))
+            title = title_elem.text.strip() if title_elem else "N/A"
+
+            company_elem = card.find("a", class_=re.compile("company|startup"))
+            company = company_elem.text.strip() if company_elem else "N/A"
+
+            loc_elem = card.find("span", class_=re.compile("location"))
+            location = loc_elem.text.strip() if loc_elem else "Remote"
+
+            apply_link = "N/A"
+            if title_elem and title_elem.get("href"):
+                href = title_elem["href"]
+                apply_link = f"https://wellfound.com{href}" if not href.startswith("http") else href
+
+            if apply_link in seen:
+                continue
+            seen.add(apply_link)
+
+            if job_title_query and job_title_query not in title.lower():
+                continue
+
+            job = {
+                "portal": "Wellfound",
+                "title": title,
+                "company": company,
+                "location": location,
+                "experience": search_item.get("experience", "Not Specified"),
+                "apply_link": apply_link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception:
+            continue
+
+    print(f"  Wellfound: Collected {len(results)} jobs.")
+    return results
+
+
+def scrape_remotive(search_item):
+    """Scrapes Remotive.com RSS feed for remote developer jobs."""
+    query = search_item.get("job_title", "").lower()
+    print(f"Scraping Remotive RSS for: {query}")
+
+    url = "https://remotive.com/remote-jobs/feed/software-dev"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    results = []
+
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            print(f"  [-] Remotive RSS returned {response.status_code}")
+            return []
+
+        soup = BeautifulSoup(response.content, features="xml")
+        items = soup.find_all("item")
+        now = datetime.now(timezone.utc)
+
+        for item in items:
+            title = item.find("title").text.strip() if item.find("title") else "N/A"
+            link  = item.find("link").text.strip()  if item.find("link")  else "N/A"
+            pub_date_text = item.find("pubDate").text if item.find("pubDate") else ""
+
+            if query and query not in title.lower():
+                continue
+
+            if pub_date_text:
+                try:
+                    pub_dt = parsedate_to_datetime(pub_date_text)
+                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
+                        continue
+                except Exception:
+                    pass
+
+            job = {
+                "portal": "Remotive",
+                "title": title,
+                "company": "N/A",
+                "location": "Remote",
+                "experience": search_item.get("experience", "Not Specified"),
+                "apply_link": link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if config.MAX_JOBS_PER_PORTAL > 0 and len(results) >= config.MAX_JOBS_PER_PORTAL:
+                break
+
+    except Exception as e:
+        print(f"Error scraping Remotive RSS: {e}")
+
+    print(f"  Remotive: Collected {len(results)} jobs.")
+    return results
+
+
+def scrape_generic_selenium(driver, search_item):
+    """
+    Generic fallback Selenium scraper for company career pages and other portals.
+    Attempts to find common job listing patterns on any page.
+    Matches links whose text contains the job title keyword.
+    """
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping (generic): {url}")
+    driver.get(url)
+    time.sleep(random.uniform(3.5, 5.5))
+
+    for _ in range(3):
+        driver.execute_script("window.scrollBy(0, window.innerHeight);")
+        time.sleep(0.7)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+
+    # Try common job card selectors
+    cards = (
+        soup.find_all("div",  class_=re.compile("job|career|opening|position|listing", re.I))
+        or soup.find_all("li",   class_=re.compile("job|career|opening|position", re.I))
+        or soup.find_all("tr",   class_=re.compile("job|career|opening", re.I))
+    )
+
+    results = []
+    seen = set()
+
+    # Fallback: scan all anchor tags whose text matches the job title
+    if not cards:
+        anchors = soup.find_all("a", href=True)
+        for a in anchors:
+            text = a.get_text(strip=True)
+            if job_title_query and job_title_query not in text.lower():
+                continue
+            href = a["href"]
+            if not href.startswith("http"):
+                from urllib.parse import urljoin
+                href = urljoin(url, href)
+            if href in seen:
+                continue
+            seen.add(href)
+            job = {
+                "portal": urllib.parse.urlparse(url).netloc,
+                "title": text or job_title_query,
+                "company": urllib.parse.urlparse(url).netloc,
+                "location": search_item.get("location", "India"),
+                "experience": search_item.get("experience", "Not Specified"),
+                "apply_link": href,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        print(f"  Generic (anchor fallback): Collected {len(results)} jobs from {url}")
+        return results
+
+    for card in cards:
+        try:
+            title_elem = card.find(["h2", "h3", "h4", "a"])
+            title = title_elem.text.strip() if title_elem else "N/A"
+
+            if job_title_query and job_title_query not in title.lower():
+                continue
+
+            link_elem = card.find("a", href=True)
+            apply_link = "N/A"
+            if link_elem:
+                href = link_elem["href"]
+                if not href.startswith("http"):
+                    from urllib.parse import urljoin
+                    href = urljoin(url, href)
+                apply_link = href
+
+            if apply_link in seen:
+                continue
+            seen.add(apply_link)
+
+            job = {
+                "portal": urllib.parse.urlparse(url).netloc,
+                "title": title,
+                "company": urllib.parse.urlparse(url).netloc,
+                "location": search_item.get("location", "India"),
+                "experience": search_item.get("experience", "Not Specified"),
+                "apply_link": apply_link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception:
+            continue
+
+    print(f"  Generic: Collected {len(results)} jobs from {url}")
+    return results
+
+
+def scrape_google_search(driver, search_item):
+    """
+    Scrapes Google Search results for job query links and snippets.
+    """
+    url = search_item.get("portal_url")
+    job_title_query = search_item.get("job_title", "").lower()
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    print(f"Scraping Google Search: {url}")
+    driver.get(url)
+    time.sleep(random.uniform(3.0, 4.5))
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    results = []
+    seen = set()
+
+    # Google search result cards are typically div.g or div.MjjYud
+    search_cards = soup.find_all("div", class_=re.compile(r"\bg\b|MjjYud|tF2Cxc"))
+
+    for card in search_cards:
+        try:
+            h3 = card.find("h3")
+            if not h3:
+                continue
+            title = h3.text.strip()
+
+            a_tag = card.find("a", href=True)
+            if not a_tag:
+                continue
+            link = a_tag["href"]
+
+            # Handle Google redirect URLs like /url?q=https://target.com...
+            if link.startswith("/url?"):
+                parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
+                if "q" in parsed_q and parsed_q["q"]:
+                    link = parsed_q["q"][0]
+
+            if not link.startswith("http") or "google.com" in link:
+                continue
+
+            if link in seen:
+                continue
+            seen.add(link)
+
+            snippet_elem = card.find("div", class_=re.compile("VwiCwb|IsZvec|aCOpRe"))
+            snippet = snippet_elem.text.strip() if snippet_elem else ""
+
+            job = {
+                "portal": "Google Search",
+                "title": title,
+                "company": "Aggregated via Google",
+                "location": search_item.get("location", "India"),
+                "experience": search_item.get("experience", "Not Specified"),
+                "apply_link": link,
+                "recruiter_contact": f"Snippet: {snippet[:100]}..." if snippet else "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if max_jobs > 0 and len(results) >= max_jobs:
+                break
+        except Exception:
+            continue
+
+    if not results:
+        return scrape_generic_selenium(driver, search_item)
+
+    print(f"  Google Search: Collected {len(results)} search result links.")
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN ORCHESTRATOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Domains that explicitly require Selenium
+SELENIUM_DOMAINS = [
+    "linkedin.com", "indeed.com", "naukri.com", "foundit.in",
+    "shine.com", "timesjobs.com", "glassdoor.co.in", "glassdoor.com",
+    "wellfound.com", "angel.co", "cutshort.io", "instahyre.com",
+    "hirist.tech", "techgig.com", "realpython", "fake-jobs",
+    "google.com",
+    # Company career pages & ATS sources
+    "tcs.com", "infosys.com", "wipro.com", "hcltech.com",
+    "techmahindra.com", "persistent.com", "ltimindtree.com",
+    "nagarro.com", "zoho.com", "freshworks.com", "cybage.com",
+    "zensar.com", "greenhouse.io", "lever.co", "workday.com",
+    "smartrecruiters.com", "ashbyhq.com", "icims.com", "jobvite.com"
+]
+
+# Domains routed to their specific RSS / API scrapers (no Selenium needed)
+RSS_API_MAP = {
+    "remoteok.com":       scrape_remoteok,
+    "weworkremotely.com": scrape_weworkremotely,
+    "upwork.com":         scrape_upwork_rss,
+    "remotive.com":       scrape_remotive,
+    # Freelancer / Guru / PeoplePerHour → Upwork RSS as best-effort proxy
+    "freelancer.com":     scrape_upwork_rss,
+    "guru.com":           scrape_upwork_rss,
+    "peopleperhour.com":  scrape_upwork_rss,
+    # Remote job boards with known RSS/API feeds
+    "remote.co":          scrape_weworkremotely,
+    "workingnomads.com":  scrape_weworkremotely,
+    "jobgether.com":      scrape_remotive,
+    "dailyremote.com":    scrape_remotive,
+    "justremote.co":      scrape_remotive,
+    "remotefront.io":     scrape_remotive,
+    "nodesk.co":          scrape_remotive,
+    "virtualvocations.com": scrape_remotive,
+    "remotewoman.com":    scrape_remotive,
+    "flexjobs.com":       scrape_remotive,
+    "remotelyawesome.com": scrape_remotive,
+    "remoteleaf.com":     scrape_remotive,
+    "avasarai.com":       scrape_remotive,
+}
+
+
 def scrape_jobs(search_items):
     """
     Iterates through search configurations from Excel and scrapes jobs.
-    Uses Selenium for web pages, and requests for APIs/RSS.
+    Routes each URL to the best-matching scraper.
     """
     driver = None
     all_jobs = []
-    
-    # Determine if we need Selenium by checking if any portal is LinkedIn/Indeed/Sandbox
+
+    # Initialize Selenium if at least one target is NOT handled by RSS/API
     need_selenium = any(
-        any(x in item.get("portal_url", "").lower() for x in ["linkedin.com", "indeed.com", "realpython", "fake-jobs"])
+        not any(rss_domain in item.get("portal_url", "").lower() for rss_domain in RSS_API_MAP)
         for item in search_items
     )
-    
+
     try:
         if need_selenium:
             driver = get_chrome_driver()
-            
+
         for idx, item in enumerate(search_items):
-            url = item.get("portal_url", "").lower()
-            print(f"\n--- Scraper Processing Record #{idx+1} ---")
-            print(f"URL: {url} | Query: {item.get('job_title')} | Experience: {item.get('experience')} | Location: {item.get('location')}")
-            
+            url_raw = item.get("portal_url", "").strip()
+            if not url_raw:
+                continue
+
+            url = url_raw.lower()
+            print(f"\n{'─'*60}")
+            print(f"[{idx+1}/{len(search_items)}] {url_raw}")
+            print(f"Query: {item.get('job_title')} | Exp: {item.get('experience')} | Loc: {item.get('location')}")
+
             try:
                 jobs = []
-                if "realpython" in url or "fake-jobs" in url:
-                    if driver:
+
+                # ── RSS / API portals ──────────────────────────────────────
+                matched_rss = False
+                for domain, fn in RSS_API_MAP.items():
+                    if domain in url:
+                        jobs = fn(item)
+                        matched_rss = True
+                        break
+
+                if not matched_rss:
+                    # ── Selenium portals ───────────────────────────────────
+                    if not driver:
+                        driver = get_chrome_driver()
+
+                    if "google.com/search" in url:
+                        jobs = scrape_google_search(driver, item)
+                    elif "realpython" in url or "fake-jobs" in url:
                         jobs = scrape_fake_jobs_sandbox(driver, item)
-                elif "linkedin.com" in url:
-                    if driver:
+                    elif "linkedin.com" in url:
                         jobs = scrape_linkedin_public(driver, item)
-                elif "indeed.com" in url:
-                    if driver:
+                    elif "indeed.com" in url:
                         jobs = scrape_indeed_public(driver, item)
-                elif "remoteok" in url:
-                    jobs = scrape_remoteok(item)
-                elif "weworkremotely" in url:
-                    jobs = scrape_weworkremotely(item)
-                elif "upwork" in url:
-                    jobs = scrape_upwork_rss(item)
-                else:
-                    # Generic fallback
-                    print(f"Unknown portal URL '{url}'. Attempting RSS or API search based on domain...")
-                    if "wework" in url:
-                        jobs = scrape_weworkremotely(item)
-                    elif "remote" in url:
-                        jobs = scrape_remoteok(item)
+                    elif "naukri.com" in url:
+                        jobs = scrape_naukri(driver, item)
+                    elif "foundit.in" in url:
+                        jobs = scrape_foundit(driver, item)
+                    elif "shine.com" in url:
+                        jobs = scrape_shine(driver, item)
+                    elif "timesjobs.com" in url:
+                        jobs = scrape_timesjobs(driver, item)
+                    elif "glassdoor" in url:
+                        jobs = scrape_glassdoor(driver, item)
+                    elif "wellfound.com" in url or "angel.co" in url:
+                        jobs = scrape_wellfound(driver, item)
                     else:
-                        if driver:
-                            jobs = scrape_linkedin_public(driver, item)
-                
-                # Apply India-eligibility post-scrape filter
-                before_filter = len(jobs)
+                        # Generic Selenium fallback for company career pages, ATS portals, etc.
+                        jobs = scrape_generic_selenium(driver, item)
+
+                # ── India eligibility filter ───────────────────────────────
+                before = len(jobs)
                 jobs = [j for j in jobs if is_india_eligible(j)]
-                dropped = before_filter - len(jobs)
+                dropped = before - len(jobs)
                 if dropped:
-                    print(f"[India Filter] Dropped {dropped} non-India / non-remote jobs.")
-                print(f"Successfully scraped {len(jobs)} India-eligible jobs for this criteria.")
+                    print(f"[India Filter] Dropped {dropped} non-India / non-remote listings.")
+
+                print(f"✓ {len(jobs)} India-eligible jobs collected.")
                 all_jobs.extend(jobs)
-                
+
+                # Short delay between requests to be polite
+                time.sleep(random.uniform(1.0, 2.0))
+
             except Exception as entry_err:
-                print(f"Failed to scrape URL {url}: {entry_err}")
+                print(f"✗ Failed to scrape {url_raw}: {entry_err}")
                 continue
-                
+
     finally:
         if driver:
             print("\nClosing Chrome WebDriver...")
             driver.quit()
-            
+
+    print(f"\n{'═'*60}")
+    print(f"Total India-eligible jobs collected: {len(all_jobs)}")
     return all_jobs
+
+
+

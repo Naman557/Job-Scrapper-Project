@@ -97,12 +97,18 @@ def run_scraper_flow():
     print(f"[+] Categorized: {len(permanent_jobs)} Permanent jobs, {len(freelance_jobs)} Freelance jobs.")
     
     # 6. Save results locally
+    timestamp = time.strftime('%Y%m%d_%H%M%S')
     if permanent_jobs:
         try:
             df_perm = pd.DataFrame(permanent_jobs)
             df_perm.columns = [col.replace("_", " ").title() for col in df_perm.columns]
-            df_perm.to_excel("scraped_jobs_permanent.xlsx", index=False, engine='openpyxl')
-            print("[+] Saved permanent job listings to 'scraped_jobs_permanent.xlsx'.")
+            try:
+                df_perm.to_excel("scraped_jobs_permanent.xlsx", index=False, engine='openpyxl')
+                print("[+] Saved permanent job listings to 'scraped_jobs_permanent.xlsx'.")
+            except PermissionError:
+                fallback_file = f"scraped_jobs_permanent_{timestamp}.xlsx"
+                df_perm.to_excel(fallback_file, index=False, engine='openpyxl')
+                print(f"[!] Primary file locked by Excel. Saved to fallback '{fallback_file}'.")
         except Exception as save_err:
             print(f"[-] Could not save local permanent jobs file: {save_err}")
             
@@ -110,8 +116,13 @@ def run_scraper_flow():
         try:
             df_free = pd.DataFrame(freelance_jobs)
             df_free.columns = [col.replace("_", " ").title() for col in df_free.columns]
-            df_free.to_excel("scraped_jobs_freelance.xlsx", index=False, engine='openpyxl')
-            print("[+] Saved freelance job listings to 'scraped_jobs_freelance.xlsx'.")
+            try:
+                df_free.to_excel("scraped_jobs_freelance.xlsx", index=False, engine='openpyxl')
+                print("[+] Saved freelance job listings to 'scraped_jobs_freelance.xlsx'.")
+            except PermissionError:
+                fallback_file = f"scraped_jobs_freelance_{timestamp}.xlsx"
+                df_free.to_excel(fallback_file, index=False, engine='openpyxl')
+                print(f"[!] Primary file locked by Excel. Saved to fallback '{fallback_file}'.")
         except Exception as save_err:
             print(f"[-] Could not save local freelance jobs file: {save_err}")
             

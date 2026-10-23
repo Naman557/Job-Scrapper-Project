@@ -1,4 +1,5 @@
 import smtplib
+import html
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import config
@@ -42,20 +43,27 @@ def generate_html_body(jobs, report_type):
     rows_html = ""
     for idx, job in enumerate(jobs):
         bg_color = "#ffffff" if idx % 2 == 0 else "#f9fbfd"
+        apply_link = html.escape(str(job.get("apply_link", "N/A")))
+        title = html.escape(str(job.get("title", "N/A")))
+        company = html.escape(str(job.get("company", "N/A")))
+        location = html.escape(str(job.get("location", "N/A")))
+        experience = html.escape(str(job.get("experience", "N/A")))
+        recruiter_contact = html.escape(str(job.get("recruiter_contact", "N/A")))
+
         apply_btn = (
-            f'<a href="{job["apply_link"]}" target="_blank" style="display: inline-block; padding: 6px 12px; '
+            f'<a href="{apply_link}" target="_blank" style="display: inline-block; padding: 6px 12px; '
             f'background-color: {theme_color}; color: white; text-decoration: none; border-radius: 4px; '
             f'font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">Apply</a>'
-            if job["apply_link"] != "N/A" else '<span style="color: #95a5a6; font-size: 12px;">N/A</span>'
+            if apply_link != "N/A" else '<span style="color: #95a5a6; font-size: 12px;">N/A</span>'
         )
         
         rows_html += f"""
         <tr style="background-color: {bg_color}; border-bottom: 1px solid #eef2f5;">
-            <td style="padding: 12px 15px; font-weight: 600; color: #2c3e50;">{job['title']}</td>
-            <td style="padding: 12px 15px; color: #576574;">{job['company']}</td>
-            <td style="padding: 12px 15px; color: #576574;">{job['location']}</td>
-            <td style="padding: 12px 15px; color: #576574;">{job['experience']}</td>
-            <td style="padding: 12px 15px; color: #576574; font-size: 13px;">{job['recruiter_contact']}</td>
+            <td style="padding: 12px 15px; font-weight: 600; color: #2c3e50;">{title}</td>
+            <td style="padding: 12px 15px; color: #576574;">{company}</td>
+            <td style="padding: 12px 15px; color: #576574;">{location}</td>
+            <td style="padding: 12px 15px; color: #576574;">{experience}</td>
+            <td style="padding: 12px 15px; color: #576574; font-size: 13px;">{recruiter_contact}</td>
             <td style="padding: 12px 15px; text-align: center;">{apply_btn}</td>
         </tr>
         """
