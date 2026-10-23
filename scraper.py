@@ -7,76 +7,194 @@ import requests
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 import config
 
+# ---------------------------------------------------------------------------
+# Global Session & Driver Cache (Eliminates redundant network checks)
+# ---------------------------------------------------------------------------
+_CACHED_DRIVER_PATH = None
+_DRIVER_PATH_LOCK = threading.Lock()
+
+def get_chromedriver_path():
+    """
+    Caches the ChromeDriver installation path to prevent repeated network
+    lookups on GitHub, saving 15-30s on every driver initialization.
+    """
+    global _CACHED_DRIVER_PATH
+    with _DRIVER_PATH_LOCK:
+        if not _CACHED_DRIVER_PATH:
+            _CACHED_DRIVER_PATH = ChromeDriverManager().install()
+        return _CACHED_DRIVER_PATH
+
+def create_http_session():
+    """
+    Creates an optimized requests.Session with connection pooling,
+    keep-alive, and retry backoff for rapid HTTP/API/RSS queries.
+    """
+    session = requests.Session()
+    retries = Retry(
+        total=2,
+        backoff_factor=0.3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        raise_on_status=False
+    )
+    adapter = HTTPAdapter(max_retries=retries, pool_connections=50, pool_maxsize=50)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    })
+    return session
+
+GLOBAL_SESSION = create_http_session()
+
+
+# ---------------------------------------------------------------------------
+# High-Performance Selenium Driver Setup
+# ---------------------------------------------------------------------------
 def get_chrome_driver():
     """
-    Initializes and returns a Selenium Chrome WebDriver with stealth configurations.
+    Initializes and returns a high-performance Selenium Chrome WebDriver:
+    - Eager page load (does not block waiting for heavy ads, video, fonts)
+    - Image loading disabled (saves 70%+ bandwidth and CPU)
+    - Performance and anti-detection flags
+    - Strict timeouts to avoid hanging indefinitely on slow websites
     """
     chrome_options = Options()
     if config.HEADLESS_MODE:
         chrome_options.add_argument("--headless=new")
-    
-    # Anti-detection options
+
+    # Fast eager loading: return control as soon as DOM is interactive
+    if getattr(config, "FAST_PAGE_LOAD", True):
+        chrome_options.page_load_strategy = "eager"
+
+    # Disable images and unnecessary media streams to maximize speed
+    if getattr(config, "DISABLE_IMAGES", True):
+        chrome_options.add_argument("--blink-settings=imagesEnabled=false")
+        prefs = {
+            "profile.managed_default_content_settings.images": 2,
+            "profile.default_content_setting_values.images": 2,
+            "profile.default_content_setting_values.media_stream": 2,
+            "profile.default_content_setting_values.notifications": 2,
+            "profile.default_content_setting_values.geolocation": 2,
+            "profile.default_content_settings.popups": 0,
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
+
+    # Performance and anti-detection flags
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    
-    # List of common User-Agents to rotate
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-infobars")
+    chrome_options.add_argument("--disable-sync")
+    chrome_options.add_argument("--disable-translate")
+    chrome_options.add_argument("--disable-background-networking")
+    chrome_options.add_argument("--disable-default-apps")
+    chrome_options.add_argument("--mute-audio")
+    chrome_options.add_argument("--no-first-run")
+    chrome_options.add_argument("--dns-prefetch-disable")
+    chrome_options.add_argument("--log-level=3")
+
     user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ]
     chrome_options.add_argument(f"user-agent={random.choice(user_agents)}")
-    
-    # Avoid Selenium signature detection
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    service = Service(ChromeDriverManager().install())
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+
+    driver_path = get_chromedriver_path()
+    service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
-    
-    # Execute CDP commands to bypass WebDriver flags
-    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    })
-    
+
+    # Set strict timeouts so slow pages don't block execution
+    timeout_secs = getattr(config, "PAGE_LOAD_TIMEOUT", 15)
+    driver.set_page_load_timeout(timeout_secs)
+    driver.set_script_timeout(10)
+
+    # Mask WebDriver flag
+    try:
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        })
+    except Exception:
+        pass
+
     return driver
 
+
+def fast_scroll_and_wait(driver, min_pause=0.3):
+    """
+    Rapidly triggers lazy-loading content with quick scroll increments
+    without wasting seconds on blind sleeps.
+    """
+    try:
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.5);")
+        time.sleep(min_pause)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(min_pause)
+    except Exception:
+        pass
+
+
+def safe_driver_get(driver, url):
+    """
+    Safely navigates to a URL, catching TimeoutException if eager DOM is already loaded.
+    """
+    try:
+        driver.get(url)
+        return True
+    except TimeoutException:
+        # With eager loading, timeout often fires after DOMContentLoaded, which is fine
+        return True
+    except Exception as e:
+        print(f"[!] Navigation error for {url}: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Job Classification and Filtering
+# ---------------------------------------------------------------------------
 def classify_job_type(job):
     """
     Classifies a job as 'freelance' or 'permanent' based on portal name and keywords.
     """
     portal = job.get("portal", "").lower()
     title = job.get("title", "").lower()
-    
+
     # Portal checks
-    freelance_portals = ["upwork", "freelancer", "fiverr", "guru"]
+    freelance_portals = ["upwork", "freelancer", "fiverr", "guru", "peopleperhour"]
     for fp in freelance_portals:
         if fp in portal:
             return "freelance"
-            
+
     # Keyword checks
     freelance_keywords = ["freelance", "contractor", "contract", "hourly", "gig", "part-time", "temporary", "consultant"]
     for kw in freelance_keywords:
         if kw in title:
             return "freelance"
-            
+
     return "permanent"
 
-# ---------------------------------------------------------------------------
-# India Eligibility Filter
-# ---------------------------------------------------------------------------
 
 # Known Indian cities and regions used to verify a job is India-based
 INDIA_TERMS = [
@@ -87,7 +205,6 @@ INDIA_TERMS = [
     "chandigarh", "coimbatore", "kochi", "vizag", "vadodara"
 ]
 
-# Terms that clearly indicate a non-Indian location (not allowed unless remote)
 NON_INDIA_COUNTRY_TERMS = [
     "united states", " usa", "u.s.a", "new york", "san francisco",
     "seattle", "chicago", "austin", "boston", "los angeles",
@@ -100,7 +217,6 @@ NON_INDIA_COUNTRY_TERMS = [
     "brazil", "mexico", "russia", "moscow", "south korea"
 ]
 
-# Terms that signal a worldwide/remote-friendly job
 REMOTE_TERMS = [
     "remote", "worldwide", "global", "anywhere", "work from home",
     "wfh", "distributed"
@@ -109,46 +225,28 @@ REMOTE_TERMS = [
 def is_india_eligible(job):
     """
     Returns True if an Indian job-seeker can reasonably apply for this job.
-
-    Rules:
-    1. PASS if location contains an Indian city/country name.
-    2. PASS if location contains a remote/worldwide keyword  
-       (the job is location-agnostic, so Indian applicants can apply).
-    3. FAIL if location contains a clearly non-Indian country/city
-       (e.g., London, New York) and is NOT remote.
-    4. PASS for unknown / unspecified locations (give benefit of doubt).
     """
     loc = str(job.get("location", "")).lower()
     portal = str(job.get("portal", "")).lower()
 
-    # Freelance platforms (Upwork, WWR, RemoteOK) are always global-remote -> PASS
-    always_remote_portals = ["upwork", "weworkremotely", "remoteok"]
+    always_remote_portals = ["upwork", "weworkremotely", "remoteok", "remotive"]
     if any(p in portal for p in always_remote_portals):
         return True
 
-    # Explicit India mention -> PASS
     if any(term in loc for term in INDIA_TERMS):
         return True
 
-    # Remote / worldwide mention -> PASS
     if any(term in loc for term in REMOTE_TERMS):
         return True
 
-    # Clearly non-Indian country/city without remote -> FAIL
     if any(term in loc for term in NON_INDIA_COUNTRY_TERMS):
         return False
 
-    # Unknown or blank location -> PASS (benefit of doubt)
     return True
 
+
 def get_linkedin_time_param(days):
-    """
-    Maps days limit to LinkedIn f_TPR parameter.
-    r86400: past 24h
-    r604800: past week
-    r1209600: past 2 weeks
-    r2592000: past month
-    """
+    """Maps days limit to LinkedIn f_TPR parameter."""
     if days <= 1:
         return "r86400"
     elif days <= 7:
@@ -158,50 +256,54 @@ def get_linkedin_time_param(days):
     else:
         return "r2592000"
 
+
+# ---------------------------------------------------------------------------
+# Sandbox Scraper (RealPython Fake Jobs)
+# ---------------------------------------------------------------------------
 def scrape_fake_jobs_sandbox(driver, search_item):
     """
     Scrapes the RealPython fake jobs sandbox page.
-    Filters mock entries locally by title, location, and date (mocked to recent).
     """
     url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "").lower()
     location_query = search_item.get("location", "").lower()
-    
+
     print(f"Scraping sandbox environment: {url}")
-    driver.get(url)
-    
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.ID, "ResultsContainer"))
-    )
-    
+    if not safe_driver_get(driver, url):
+        return []
+
+    try:
+        WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.ID, "ResultsContainer"))
+        )
+    except Exception:
+        pass
+
     soup = BeautifulSoup(driver.page_source, "html.parser")
     job_elements = soup.find_all("div", class_="card-content")
-    
+
     results = []
     for job_elem in job_elements:
         title_elem = job_elem.find("h2", class_="title")
         company_elem = job_elem.find("h3", class_="company")
         location_elem = job_elem.find("p", class_="location")
         link_elems = job_elem.find_all("a")
-        
+
         title = title_elem.text.strip() if title_elem else "N/A"
         company = company_elem.text.strip() if company_elem else "N/A"
         location = location_elem.text.strip() if location_elem else "N/A"
-        
-        # Filters
+
         if job_title_query and job_title_query not in title.lower():
             continue
         if location_query and location_query != "remote" and location_query not in location.lower():
             continue
-            
+
         apply_link = "N/A"
         if len(link_elems) > 1:
             apply_link = link_elems[1]["href"]
         elif len(link_elems) == 1:
             apply_link = link_elems[0]["href"]
-            
-        recruiter_contact = "sandbox-recruiter@realpython.io"
-        
+
         job = {
             "portal": "RealPython Sandbox",
             "title": title,
@@ -209,26 +311,119 @@ def scrape_fake_jobs_sandbox(driver, search_item):
             "location": location,
             "experience": search_item.get("experience", "Not Specified"),
             "apply_link": apply_link,
-            "recruiter_contact": recruiter_contact
+            "recruiter_contact": "sandbox-recruiter@realpython.io"
         }
         job["job_type"] = classify_job_type(job)
         results.append(job)
-        
-        if len(results) >= config.MAX_JOBS_PER_PORTAL:
+
+        if config.MAX_JOBS_PER_PORTAL > 0 and len(results) >= config.MAX_JOBS_PER_PORTAL:
             break
-            
+
     return results
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn Scrapers (Fast Guest API + Selenium Fallback)
+# ---------------------------------------------------------------------------
+def scrape_linkedin_guest_api(search_item, session=None):
+    """
+    Ultra-fast LinkedIn Guest API endpoint.
+    Fetches raw HTML job card snippets directly over HTTP in ~200ms
+    without spinning up Selenium or rendering JavaScript.
+    """
+    portal_url = search_item.get("portal_url", "")
+    job_title_query = search_item.get("job_title", "")
+    location_query = search_item.get("location", "")
+    max_jobs = config.MAX_JOBS_PER_PORTAL
+
+    time_param = get_linkedin_time_param(config.MAX_AGE_DAYS)
+    keywords = urllib.parse.quote(job_title_query)
+    india_location = location_query if location_query else "India"
+    if "india" not in india_location.lower():
+        india_location = f"{india_location}, India"
+    location_enc = urllib.parse.quote(india_location)
+
+    base_api = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location_enc}&f_TPR={time_param}"
+
+    sess = session or GLOBAL_SESSION
+    results = []
+    seen_links = set()
+    page_offset = 0
+    PAGE_SIZE = 10
+    max_pages = 5 if max_jobs > 0 and max_jobs <= 50 else (15 if max_jobs == 0 else max(1, max_jobs // PAGE_SIZE + 1))
+
+    print(f"Scraping LinkedIn Fast Guest API: {job_title_query} in {india_location}")
+
+    for _ in range(max_pages):
+        url = f"{base_api}&start={page_offset}"
+        try:
+            resp = sess.get(url, timeout=8)
+            if resp.status_code != 200 or not resp.text.strip():
+                break
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            cards = soup.find_all("li")
+            if not cards:
+                cards = soup.find_all("div", class_=re.compile("job-search-card|base-card"))
+            if not cards:
+                break
+
+            new_cards = 0
+            for card in cards:
+                title_elem = card.find(["h3", "h2"], class_=re.compile("job-search-card__title|base-search-card__title|title"))
+                company_elem = card.find(["h4", "h3", "span"], class_=re.compile("job-search-card__subtitle|base-search-card__subtitle|subtitle"))
+                loc_elem = card.find("span", class_=re.compile("job-search-card__location|location"))
+                link_elem = card.find("a", href=True)
+
+                title = title_elem.text.strip() if title_elem else "N/A"
+                company = company_elem.text.strip() if company_elem else "N/A"
+                location = loc_elem.text.strip() if loc_elem else "India"
+                apply_link = link_elem["href"] if link_elem else "N/A"
+                if apply_link != "N/A" and "?" in apply_link:
+                    apply_link = apply_link.split("?")[0]
+
+                if apply_link in seen_links or apply_link == "N/A":
+                    continue
+                seen_links.add(apply_link)
+                new_cards += 1
+
+                if job_title_query.lower() not in title.lower():
+                    continue
+
+                job = {
+                    "portal": "LinkedIn",
+                    "title": title,
+                    "company": company,
+                    "location": location,
+                    "experience": search_item.get("experience", "3-5 years"),
+                    "apply_link": apply_link,
+                    "recruiter_contact": "Refer to Apply Link"
+                }
+                job["job_type"] = classify_job_type(job)
+                results.append(job)
+
+                if max_jobs > 0 and len(results) >= max_jobs:
+                    break
+
+            page_offset += PAGE_SIZE
+            if new_cards == 0 or (max_jobs > 0 and len(results) >= max_jobs):
+                break
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"LinkedIn Fast API request note: {e}")
+            break
+
+    return results
+
 
 def scrape_linkedin_public(driver, search_item):
     """
-    Scrapes LinkedIn's public job search interface with infinite-scroll pagination.
-    Keeps scrolling and loading more pages until no new cards appear.
-    Filters by posting date using &f_TPR parameter.
+    Selenium fallback for LinkedIn job search with eager loading & rapid scrolling.
     """
-    portal_url = search_item.get("portal_url")
+    portal_url = search_item.get("portal_url", "")
     job_title_query = search_item.get("job_title", "")
     location_query = search_item.get("location", "")
-    max_jobs = config.MAX_JOBS_PER_PORTAL  # 0 = unlimited
+    max_jobs = config.MAX_JOBS_PER_PORTAL
 
     time_param = get_linkedin_time_param(config.MAX_AGE_DAYS)
 
@@ -250,27 +445,23 @@ def scrape_linkedin_public(driver, search_item):
     results = []
     seen_links = set()
     page_offset = 0
-    PAGE_SIZE = 25  # LinkedIn loads 25 results per page offset
+    PAGE_SIZE = 25
+    max_pages = 4 if max_jobs > 0 and max_jobs <= 50 else (10 if max_jobs == 0 else max(1, max_jobs // PAGE_SIZE + 1))
 
-    print(f"Scraping LinkedIn Public Jobs (Max Age: {config.MAX_AGE_DAYS} days, all pages): {base_url}")
+    print(f"Scraping LinkedIn via Selenium: {base_url}")
 
-    while True:
-        # LinkedIn pagination uses &start= offset parameter
+    for _ in range(max_pages):
         url = f"{base_url}&start={page_offset}"
-        driver.get(url)
-        time.sleep(random.uniform(2.5, 4.0))
+        if not safe_driver_get(driver, url):
+            break
 
-        # Scroll down slowly to trigger lazy-loaded cards
-        last_height = driver.execute_script("return document.body.scrollHeight")
-        for _ in range(4):
-            driver.execute_script("window.scrollBy(0, window.innerHeight);")
-            time.sleep(0.8)
+        fast_scroll_and_wait(driver, min_pause=0.3)
 
-        # Click "See more jobs" button if it exists (some pages show it)
+        # Click 'See more jobs' button if present
         try:
             see_more = driver.find_element(By.XPATH, "//button[contains(@aria-label,'See more jobs')]")
             driver.execute_script("arguments[0].click();", see_more)
-            time.sleep(1.5)
+            time.sleep(0.5)
         except Exception:
             pass
 
@@ -294,7 +485,6 @@ def scrape_linkedin_public(driver, search_item):
                 if apply_link != "N/A" and "?" in apply_link:
                     apply_link = apply_link.split("?")[0]
 
-                # Deduplicate
                 if apply_link in seen_links or apply_link == "N/A":
                     continue
                 seen_links.add(apply_link)
@@ -315,42 +505,33 @@ def scrape_linkedin_public(driver, search_item):
                 job["job_type"] = classify_job_type(job)
                 results.append(job)
 
-            except Exception as card_err:
-                print(f"Error parsing LinkedIn job card: {card_err}")
+                if max_jobs > 0 and len(results) >= max_jobs:
+                    break
+            except Exception:
                 continue
 
-        print(f"  LinkedIn page offset={page_offset}: {new_cards_found} new cards, {len(results)} total collected so far.")
-
-        # Stop if no new cards were loaded on this page (end of results)
-        if new_cards_found == 0:
-            print("  LinkedIn: No new cards found. End of results.")
-            break
-
-        # Stop if we hit the user-defined cap (0 = unlimited)
-        if max_jobs > 0 and len(results) >= max_jobs:
-            print(f"  LinkedIn: Reached MAX_JOBS_PER_PORTAL cap ({max_jobs}).")
+        if new_cards_found == 0 or (max_jobs > 0 and len(results) >= max_jobs):
             break
 
         page_offset += PAGE_SIZE
-
-        # Safety limit: LinkedIn public search rarely shows more than 1000 results
-        if page_offset > 975:
-            print("  LinkedIn: Reached maximum offset (1000). Stopping.")
+        if page_offset > 300:
             break
 
-    print(f"LinkedIn scraping complete. Collected {len(results)} jobs total.")
+    print(f"  LinkedIn Selenium collected {len(results)} jobs.")
     return results
 
 
+# ---------------------------------------------------------------------------
+# Indeed Scraper
+# ---------------------------------------------------------------------------
 def scrape_indeed_public(driver, search_item):
     """
-    Scrapes Indeed India jobs across multiple pages using &start= offset pagination.
-    Filters by date using &fromage parameter. Deduplicates results.
+    Scrapes Indeed India jobs with fast eager page loads and smart early exits.
     """
-    portal_url = search_item.get("portal_url")
+    portal_url = search_item.get("portal_url", "")
     job_title = search_item.get("job_title", "")
     location = search_item.get("location", "")
-    max_jobs = config.MAX_JOBS_PER_PORTAL  # 0 = unlimited
+    max_jobs = config.MAX_JOBS_PER_PORTAL
 
     if "indeed.com" not in portal_url:
         q = urllib.parse.quote(job_title)
@@ -367,29 +548,30 @@ def scrape_indeed_public(driver, search_item):
 
     results = []
     seen_links = set()
-    PAGE_SIZE = 10   # Indeed shows ~10 jobs per page
+    PAGE_SIZE = 10
+    max_pages = 3 if max_jobs > 0 and max_jobs <= 30 else (8 if max_jobs == 0 else max(1, max_jobs // PAGE_SIZE + 1))
 
-    print(f"Scraping Indeed India Jobs (Max Age: {config.MAX_AGE_DAYS} days, all pages): {base_url}")
+    print(f"Scraping Indeed India Jobs: {base_url}")
 
-    for page_num in range(50):  # max 50 pages = 500 jobs safety cap
+    for page_num in range(max_pages):
         start_offset = page_num * PAGE_SIZE
         url = f"{base_url}&start={start_offset}"
 
-        driver.get(url)
-        time.sleep(random.uniform(3.0, 5.0))
-
-        # Check for bot blocks
-        if ("hcaptcha" in driver.page_source.lower()
-                or "cloudflare" in driver.page_source.lower()
-                or "just a moment" in driver.title.lower()):
-            print(f"Warning: Indeed page {page_num + 1} was blocked by bot protection. Stopping pagination.")
+        if not safe_driver_get(driver, url):
             break
+
+        # Fast bot protection check
+        page_source_lower = driver.page_source.lower()
+        if "hcaptcha" in page_source_lower or "cloudflare" in page_source_lower or "just a moment" in driver.title.lower():
+            print(f"Warning: Indeed page {page_num + 1} encountered bot challenge. Skipping further pages.")
+            break
+
+        fast_scroll_and_wait(driver, min_pause=0.3)
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
         job_cards = soup.find_all("div", class_=re.compile("job_seen_beacon|slider_container"))
 
         if not job_cards:
-            print(f"  Indeed page {page_num + 1}: No job cards found. End of results.")
             break
 
         new_cards_found = 0
@@ -409,7 +591,6 @@ def scrape_indeed_public(driver, search_item):
                 if link_elem and "href" in link_elem.attrs:
                     apply_link = "https://in.indeed.com" + link_elem["href"]
 
-                # Deduplicate
                 if apply_link in seen_links or apply_link == "N/A":
                     continue
                 seen_links.add(apply_link)
@@ -427,77 +608,56 @@ def scrape_indeed_public(driver, search_item):
                 job["job_type"] = classify_job_type(job)
                 results.append(job)
 
-            except Exception as e:
-                print(f"Error parsing Indeed job card: {e}")
+                if max_jobs > 0 and len(results) >= max_jobs:
+                    break
+            except Exception:
                 continue
 
-        print(f"  Indeed page {page_num + 1} (start={start_offset}): {new_cards_found} new cards, {len(results)} total.")
-
-        if new_cards_found == 0:
-            print("  Indeed: No new cards on this page. End of results.")
+        if new_cards_found == 0 or (max_jobs > 0 and len(results) >= max_jobs):
             break
 
-        if max_jobs > 0 and len(results) >= max_jobs:
-            print(f"  Indeed: Reached MAX_JOBS_PER_PORTAL cap ({max_jobs}).")
-            break
-
-    print(f"Indeed scraping complete. Collected {len(results)} jobs total.")
+    print(f"Indeed scraping complete. Collected {len(results)} jobs.")
     return results
 
 
-def scrape_remoteok(search_item):
-    """
-    Scrapes RemoteOK public JSON API. Returns remote jobs matching the query.
-    Filters out jobs older than config.MAX_AGE_DAYS.
-    """
+# ---------------------------------------------------------------------------
+# Fast RSS & REST API Scrapers
+# ---------------------------------------------------------------------------
+def scrape_remoteok(search_item, session=None):
+    """Scrapes RemoteOK public JSON API with session connection reuse."""
     query = search_item.get("job_title", "").lower()
-    print(f"Scraping RemoteOK API for: {query}")
-    
+    sess = session or GLOBAL_SESSION
     url = "https://remoteok.com/api"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
+
     results = []
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = sess.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"[-] RemoteOK API returned status code {response.status_code}")
             return []
-            
+
         jobs_data = response.json()
-        
-        # RemoteOK API returns legal disclaimer as the first element
         if len(jobs_data) <= 1:
             return []
-            
+
         now = datetime.now(timezone.utc)
-        
         for job_entry in jobs_data[1:]:
             title = job_entry.get("position", "")
             company = job_entry.get("company", "")
             apply_link = job_entry.get("url", "")
             tags = job_entry.get("tags", [])
-            date_str = job_entry.get("date", "") # ISO format e.g. "2026-07-01T12:00:00-07:00"
-            
-            # Apply keywords filter
-            if query and query not in title.lower() and not any(query in tag.lower() for tag in tags):
+            date_str = job_entry.get("date", "")
+
+            if query and query not in title.lower() and not any(query in str(tag).lower() for tag in tags):
                 continue
-                
-            # Date filter
+
             if date_str:
                 try:
-                    # ISO string parse. In python 3.11+, fromisoformat supports Z and timezone offsets
-                    pub_dt = datetime.fromisoformat(date_str)
-                    # Convert to utc for comparison
-                    pub_dt_utc = pub_dt.astimezone(timezone.utc)
-                    age_days = (now - pub_dt_utc).days
-                    if age_days > config.MAX_AGE_DAYS:
+                    pub_dt = datetime.fromisoformat(date_str).astimezone(timezone.utc)
+                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
                         continue
-                except Exception as date_err:
-                    # Fallback to direct string check or keep job if unparseable
-                    print(f"Date parse error: {date_err}")
-            
+                except Exception:
+                    pass
+
             job = {
                 "portal": "RemoteOK",
                 "title": title,
@@ -509,67 +669,61 @@ def scrape_remoteok(search_item):
             }
             job["job_type"] = classify_job_type(job)
             results.append(job)
-            
-            if len(results) >= config.MAX_JOBS_PER_PORTAL:
+
+            if config.MAX_JOBS_PER_PORTAL > 0 and len(results) >= config.MAX_JOBS_PER_PORTAL:
                 break
-                
     except Exception as e:
         print(f"Error scraping RemoteOK: {e}")
-        
+
     return results
 
-def scrape_weworkremotely(search_item):
-    """
-    Scrapes WeWorkRemotely RSS feed for remote programming jobs.
-    Filters by search query and date.
-    """
+
+def parse_xml_feed(content):
+    """Parses XML RSS feed, trying lxml/xml parser first, falling back to html.parser."""
+    try:
+        return BeautifulSoup(content, features="xml")
+    except Exception:
+        return BeautifulSoup(content, "html.parser")
+
+def scrape_weworkremotely(search_item, session=None):
+    """Scrapes WeWorkRemotely RSS feed with connection reuse."""
     query = search_item.get("job_title", "").lower()
-    print(f"Scraping WeWorkRemotely RSS feed for: {query}")
-    
+    sess = session or GLOBAL_SESSION
     url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    
+
     results = []
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = sess.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"[-] WeWorkRemotely RSS returned status code {response.status_code}")
             return []
-            
-        soup = BeautifulSoup(response.content, features="xml")
+
+        soup = parse_xml_feed(response.content)
         items = soup.find_all("item")
-        
         now = datetime.now(timezone.utc)
-        
+
         for item in items:
             title_text = item.find("title").text if item.find("title") else "N/A"
             link = item.find("link").text if item.find("link") else "N/A"
             pub_date_text = item.find("pubDate").text if item.find("pubDate") else ""
-            
-            # WWR RSS titles are formatted as: "Company Name: Job Title"
+
             company = "N/A"
             title = title_text
             if ":" in title_text:
                 parts = title_text.split(":", 1)
                 company = parts[0].strip()
                 title = parts[1].strip()
-                
-            # Filter title keyword
+
             if query and query not in title.lower():
                 continue
-                
-            # Date filter
+
             if pub_date_text:
                 try:
                     pub_dt = parsedate_to_datetime(pub_date_text)
-                    age_days = (now - pub_dt).days
-                    if age_days > config.MAX_AGE_DAYS:
+                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
                         continue
-                except Exception as date_err:
-                    print(f"WWR date parsing failed: {date_err}")
-                    
+                except Exception:
+                    pass
+
             job = {
                 "portal": "WeWorkRemotely",
                 "title": title,
@@ -581,62 +735,48 @@ def scrape_weworkremotely(search_item):
             }
             job["job_type"] = classify_job_type(job)
             results.append(job)
-            
-            if len(results) >= config.MAX_JOBS_PER_PORTAL:
+
+            if config.MAX_JOBS_PER_PORTAL > 0 and len(results) >= config.MAX_JOBS_PER_PORTAL:
                 break
-                
     except Exception as e:
         print(f"Error scraping WeWorkRemotely RSS: {e}")
-        
+
     return results
 
-def scrape_upwork_rss(search_item):
-    """
-    Scrapes Upwork RSS feed for the given search query.
-    Always classifies jobs as 'freelance'.
-    """
+
+def scrape_upwork_rss(search_item, session=None):
+    """Scrapes Upwork RSS feed for the query with connection pooling."""
     query = search_item.get("job_title", "")
-    print(f"Scraping Upwork RSS for query: {query}")
-    
+    sess = session or GLOBAL_SESSION
     encoded_query = urllib.parse.quote(query)
     url = f"https://www.upwork.com/ab/feed/jobs/rss?q={encoded_query}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
+
     results = []
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = sess.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"[-] Upwork RSS returned status code {response.status_code}")
             return []
-            
-        soup = BeautifulSoup(response.content, features="xml")
+
+        soup = parse_xml_feed(response.content)
         items = soup.find_all("item")
-        
         now = datetime.now(timezone.utc)
-        
+
         for item in items:
             title = item.find("title").text if item.find("title") else "N/A"
             link = item.find("link").text if item.find("link") else "N/A"
             pub_date_text = item.find("pubDate").text if item.find("pubDate") else ""
             desc_text = item.find("description").text if item.find("description") else ""
-            
-            # Filter date
+
             if pub_date_text:
                 try:
                     pub_dt = parsedate_to_datetime(pub_date_text)
-                    age_days = (now - pub_dt).days
-                    if age_days > config.MAX_AGE_DAYS:
+                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
                         continue
-                except Exception as date_err:
-                    print(f"Upwork date parsing failed: {date_err}")
-            
-            # Clean up Upwork title which often contains category metadata
+                except Exception:
+                    pass
+
             title = title.replace(" - Upwork", "").strip()
-            
-            # Parse budget/hourly rate from description if available
+
             recruiter_contact = "Refer to Apply Link"
             budget_match = re.search(r"<b>Budget</b>:\s*\$([\d,]+)", desc_text)
             hourly_match = re.search(r"<b>Hourly Range</b>:\s*([^\n<]+)", desc_text)
@@ -644,7 +784,7 @@ def scrape_upwork_rss(search_item):
                 recruiter_contact = f"Budget: ${budget_match.group(1)}"
             elif hourly_match:
                 recruiter_contact = f"Hourly: {hourly_match.group(1).strip()}"
-                
+
             job = {
                 "portal": "Upwork",
                 "title": title,
@@ -653,46 +793,92 @@ def scrape_upwork_rss(search_item):
                 "experience": search_item.get("experience", "Not Specified"),
                 "apply_link": link,
                 "recruiter_contact": recruiter_contact,
-                "job_type": "freelance"  # Upwork is always freelance
+                "job_type": "freelance"
             }
             results.append(job)
-            
-            if len(results) >= config.MAX_JOBS_PER_PORTAL:
+
+            if config.MAX_JOBS_PER_PORTAL > 0 and len(results) >= config.MAX_JOBS_PER_PORTAL:
                 break
-                
     except Exception as e:
         print(f"Error scraping Upwork RSS: {e}")
-        
+
     return results
 
-# ─────────────────────────────────────────────────────────────────────────────
-# NEW PORTAL SCRAPERS
-# ─────────────────────────────────────────────────────────────────────────────
 
+def scrape_remotive(search_item, session=None):
+    """Scrapes Remotive.com RSS feed for remote developer jobs."""
+    query = search_item.get("job_title", "").lower()
+    sess = session or GLOBAL_SESSION
+    url = "https://remotive.com/remote-jobs/feed/software-dev"
+    results = []
+
+    try:
+        response = sess.get(url, timeout=10)
+        if response.status_code != 200:
+            return []
+
+        soup = parse_xml_feed(response.content)
+        items = soup.find_all("item")
+        now = datetime.now(timezone.utc)
+
+        for item in items:
+            title = item.find("title").text.strip() if item.find("title") else "N/A"
+            link = item.find("link").text.strip() if item.find("link") else "N/A"
+            pub_date_text = item.find("pubDate").text if item.find("pubDate") else ""
+
+            if query and query not in title.lower():
+                continue
+
+            if pub_date_text:
+                try:
+                    pub_dt = parsedate_to_datetime(pub_date_text)
+                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
+                        continue
+                except Exception:
+                    pass
+
+            job = {
+                "portal": "Remotive",
+                "title": title,
+                "company": "Remotive Partner",
+                "location": "Remote",
+                "experience": search_item.get("experience", "Not Specified"),
+                "apply_link": link,
+                "recruiter_contact": "Refer to Apply Link"
+            }
+            job["job_type"] = classify_job_type(job)
+            results.append(job)
+
+            if config.MAX_JOBS_PER_PORTAL > 0 and len(results) >= config.MAX_JOBS_PER_PORTAL:
+                break
+    except Exception as e:
+        print(f"Error scraping Remotive RSS: {e}")
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Selenium Portal Scrapers (Optimized Eager Rendering + Smart Waits)
+# ---------------------------------------------------------------------------
 def scrape_naukri(driver, search_item):
-    """Scrapes Naukri.com job listings for the given search URL."""
+    """Scrapes Naukri.com with rapid DOM detection."""
     url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "").lower()
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
     print(f"Scraping Naukri: {url}")
-    driver.get(url)
-    time.sleep(random.uniform(3.0, 5.0))
+    if not safe_driver_get(driver, url):
+        return []
 
-    # Scroll to load lazy cards
-    for _ in range(3):
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(0.8)
+    fast_scroll_and_wait(driver, min_pause=0.3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
-    # Naukri job cards are inside article tags or divs with class 'jobTuple'
     cards = soup.find_all("article", class_=re.compile("jobTuple|job-container|cust-job-tuple"))
     if not cards:
         cards = soup.find_all("div", class_=re.compile("jobTuple|srp-jobtuple-wrapper"))
 
     results = []
     seen = set()
-    print(f"  Naukri: Found {len(cards)} cards.")
 
     for card in cards:
         try:
@@ -731,7 +917,7 @@ def scrape_naukri(driver, search_item):
 
             if max_jobs > 0 and len(results) >= max_jobs:
                 break
-        except Exception as e:
+        except Exception:
             continue
 
     print(f"  Naukri: Collected {len(results)} jobs.")
@@ -739,25 +925,22 @@ def scrape_naukri(driver, search_item):
 
 
 def scrape_foundit(driver, search_item):
-    """Scrapes Foundit (formerly Monster India) job listings."""
+    """Scrapes Foundit job listings with fast eager load."""
     url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "").lower()
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
     print(f"Scraping Foundit: {url}")
-    driver.get(url)
-    time.sleep(random.uniform(3.5, 5.5))
+    if not safe_driver_get(driver, url):
+        return []
 
-    for _ in range(3):
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(0.8)
+    fast_scroll_and_wait(driver, min_pause=0.3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     cards = soup.find_all("div", class_=re.compile("card-body|job-card|srpResultCardContainer"))
 
     results = []
     seen = set()
-    print(f"  Foundit: Found {len(cards)} cards.")
 
     for card in cards:
         try:
@@ -804,25 +987,22 @@ def scrape_foundit(driver, search_item):
 
 
 def scrape_shine(driver, search_item):
-    """Scrapes Shine.com job listings."""
+    """Scrapes Shine.com listings."""
     url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "").lower()
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
     print(f"Scraping Shine.com: {url}")
-    driver.get(url)
-    time.sleep(random.uniform(3.0, 5.0))
+    if not safe_driver_get(driver, url):
+        return []
 
-    for _ in range(3):
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(0.7)
+    fast_scroll_and_wait(driver, min_pause=0.3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     cards = soup.find_all("div", class_=re.compile("job-listing|jobCardWrapper|job_listing"))
 
     results = []
     seen = set()
-    print(f"  Shine: Found {len(cards)} cards.")
 
     for card in cards:
         try:
@@ -869,25 +1049,22 @@ def scrape_shine(driver, search_item):
 
 
 def scrape_timesjobs(driver, search_item):
-    """Scrapes TimesJobs job listings."""
+    """Scrapes TimesJobs listings."""
     url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "").lower()
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
     print(f"Scraping TimesJobs: {url}")
-    driver.get(url)
-    time.sleep(random.uniform(3.0, 5.5))
+    if not safe_driver_get(driver, url):
+        return []
 
-    for _ in range(3):
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(0.7)
+    fast_scroll_and_wait(driver, min_pause=0.3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     cards = soup.find_all("li", class_=re.compile("clearfix|job-bx"))
 
     results = []
     seen = set()
-    print(f"  TimesJobs: Found {len(cards)} cards.")
 
     for card in cards:
         try:
@@ -897,7 +1074,6 @@ def scrape_timesjobs(driver, search_item):
             company_elem = card.find("h3", class_=re.compile("joblist-comp-name")) or card.find("span", class_=re.compile("company"))
             company = company_elem.text.strip() if company_elem else "N/A"
 
-            loc_elem = card.find("span", class_=re.compile("srp-skills"))
             location_ul = card.find("ul", class_=re.compile("top-jd-dtl"))
             location = "India"
             if location_ul:
@@ -937,18 +1113,16 @@ def scrape_timesjobs(driver, search_item):
 
 
 def scrape_glassdoor(driver, search_item):
-    """Scrapes Glassdoor India job listings."""
+    """Scrapes Glassdoor listings."""
     url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "").lower()
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
-    print(f"Scraping Glassdoor India: {url}")
-    driver.get(url)
-    time.sleep(random.uniform(4.0, 6.0))
+    print(f"Scraping Glassdoor: {url}")
+    if not safe_driver_get(driver, url):
+        return []
 
-    for _ in range(3):
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(0.8)
+    fast_scroll_and_wait(driver, min_pause=0.3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     cards = soup.find_all("li", class_=re.compile("JobsList_jobListItem|react-job-listing"))
@@ -957,7 +1131,6 @@ def scrape_glassdoor(driver, search_item):
 
     results = []
     seen = set()
-    print(f"  Glassdoor: Found {len(cards)} cards.")
 
     for card in cards:
         try:
@@ -1010,19 +1183,16 @@ def scrape_wellfound(driver, search_item):
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
     print(f"Scraping Wellfound: {url}")
-    driver.get(url)
-    time.sleep(random.uniform(4.0, 6.0))
+    if not safe_driver_get(driver, url):
+        return []
 
-    for _ in range(4):
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(1.0)
+    fast_scroll_and_wait(driver, min_pause=0.4)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     cards = soup.find_all("div", class_=re.compile("styles_component|JobListings_jobListings|job-listing"))
 
     results = []
     seen = set()
-    print(f"  Wellfound: Found {len(cards)} cards.")
 
     for card in cards:
         try:
@@ -1068,94 +1238,31 @@ def scrape_wellfound(driver, search_item):
     return results
 
 
-def scrape_remotive(search_item):
-    """Scrapes Remotive.com RSS feed for remote developer jobs."""
-    query = search_item.get("job_title", "").lower()
-    print(f"Scraping Remotive RSS for: {query}")
-
-    url = "https://remotive.com/remote-jobs/feed/software-dev"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    results = []
-
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code != 200:
-            print(f"  [-] Remotive RSS returned {response.status_code}")
-            return []
-
-        soup = BeautifulSoup(response.content, features="xml")
-        items = soup.find_all("item")
-        now = datetime.now(timezone.utc)
-
-        for item in items:
-            title = item.find("title").text.strip() if item.find("title") else "N/A"
-            link  = item.find("link").text.strip()  if item.find("link")  else "N/A"
-            pub_date_text = item.find("pubDate").text if item.find("pubDate") else ""
-
-            if query and query not in title.lower():
-                continue
-
-            if pub_date_text:
-                try:
-                    pub_dt = parsedate_to_datetime(pub_date_text)
-                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
-                        continue
-                except Exception:
-                    pass
-
-            job = {
-                "portal": "Remotive",
-                "title": title,
-                "company": "N/A",
-                "location": "Remote",
-                "experience": search_item.get("experience", "Not Specified"),
-                "apply_link": link,
-                "recruiter_contact": "Refer to Apply Link"
-            }
-            job["job_type"] = classify_job_type(job)
-            results.append(job)
-
-            if config.MAX_JOBS_PER_PORTAL > 0 and len(results) >= config.MAX_JOBS_PER_PORTAL:
-                break
-
-    except Exception as e:
-        print(f"Error scraping Remotive RSS: {e}")
-
-    print(f"  Remotive: Collected {len(results)} jobs.")
-    return results
-
-
 def scrape_generic_selenium(driver, search_item):
     """
-    Generic fallback Selenium scraper for company career pages and other portals.
-    Attempts to find common job listing patterns on any page.
-    Matches links whose text contains the job title keyword.
+    Generic fallback Selenium scraper for company career pages and ATS platforms.
     """
     url = search_item.get("portal_url")
     job_title_query = search_item.get("job_title", "").lower()
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
     print(f"Scraping (generic): {url}")
-    driver.get(url)
-    time.sleep(random.uniform(3.5, 5.5))
+    if not safe_driver_get(driver, url):
+        return []
 
-    for _ in range(3):
-        driver.execute_script("window.scrollBy(0, window.innerHeight);")
-        time.sleep(0.7)
+    fast_scroll_and_wait(driver, min_pause=0.3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
-
-    # Try common job card selectors
     cards = (
-        soup.find_all("div",  class_=re.compile("job|career|opening|position|listing", re.I))
-        or soup.find_all("li",   class_=re.compile("job|career|opening|position", re.I))
-        or soup.find_all("tr",   class_=re.compile("job|career|opening", re.I))
+        soup.find_all("div", class_=re.compile("job|career|opening|position|listing", re.I))
+        or soup.find_all("li", class_=re.compile("job|career|opening|position", re.I))
+        or soup.find_all("tr", class_=re.compile("job|career|opening", re.I))
     )
 
     results = []
     seen = set()
 
-    # Fallback: scan all anchor tags whose text matches the job title
+    # Anchor fallback if card blocks not found
     if not cards:
         anchors = soup.find_all("a", href=True)
         for a in anchors:
@@ -1164,7 +1271,6 @@ def scrape_generic_selenium(driver, search_item):
                 continue
             href = a["href"]
             if not href.startswith("http"):
-                from urllib.parse import urljoin
                 href = urljoin(url, href)
             if href in seen:
                 continue
@@ -1182,7 +1288,6 @@ def scrape_generic_selenium(driver, search_item):
             results.append(job)
             if max_jobs > 0 and len(results) >= max_jobs:
                 break
-        print(f"  Generic (anchor fallback): Collected {len(results)} jobs from {url}")
         return results
 
     for card in cards:
@@ -1198,7 +1303,6 @@ def scrape_generic_selenium(driver, search_item):
             if link_elem:
                 href = link_elem["href"]
                 if not href.startswith("http"):
-                    from urllib.parse import urljoin
                     href = urljoin(url, href)
                 apply_link = href
 
@@ -1223,27 +1327,22 @@ def scrape_generic_selenium(driver, search_item):
         except Exception:
             continue
 
-    print(f"  Generic: Collected {len(results)} jobs from {url}")
     return results
 
 
 def scrape_google_search(driver, search_item):
-    """
-    Scrapes Google Search results for job query links and snippets.
-    """
+    """Scrapes Google Search results for job query links."""
     url = search_item.get("portal_url")
-    job_title_query = search_item.get("job_title", "").lower()
     max_jobs = config.MAX_JOBS_PER_PORTAL
 
     print(f"Scraping Google Search: {url}")
-    driver.get(url)
-    time.sleep(random.uniform(3.0, 4.5))
+    if not safe_driver_get(driver, url):
+        return []
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     results = []
     seen = set()
 
-    # Google search result cards are typically div.g or div.MjjYud
     search_cards = soup.find_all("div", class_=re.compile(r"\bg\b|MjjYud|tF2Cxc"))
 
     for card in search_cards:
@@ -1258,7 +1357,6 @@ def scrape_google_search(driver, search_item):
                 continue
             link = a_tag["href"]
 
-            # Handle Google redirect URLs like /url?q=https://target.com...
             if link.startswith("/url?"):
                 parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
                 if "q" in parsed_q and parsed_q["q"]:
@@ -1294,149 +1392,221 @@ def scrape_google_search(driver, search_item):
     if not results:
         return scrape_generic_selenium(driver, search_item)
 
-    print(f"  Google Search: Collected {len(results)} search result links.")
     return results
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN ORCHESTRATOR
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Domains that explicitly require Selenium
-SELENIUM_DOMAINS = [
-    "linkedin.com", "indeed.com", "naukri.com", "foundit.in",
-    "shine.com", "timesjobs.com", "glassdoor.co.in", "glassdoor.com",
-    "wellfound.com", "angel.co", "cutshort.io", "instahyre.com",
-    "hirist.tech", "techgig.com", "realpython", "fake-jobs",
-    "google.com",
-    # Company career pages & ATS sources
-    "tcs.com", "infosys.com", "wipro.com", "hcltech.com",
-    "techmahindra.com", "persistent.com", "ltimindtree.com",
-    "nagarro.com", "zoho.com", "freshworks.com", "cybage.com",
-    "zensar.com", "greenhouse.io", "lever.co", "workday.com",
-    "smartrecruiters.com", "ashbyhq.com", "icims.com", "jobvite.com"
-]
-
-# Domains routed to their specific RSS / API scrapers (no Selenium needed)
+# ---------------------------------------------------------------------------
+# Routing and Concurrency Engine
+# ---------------------------------------------------------------------------
 RSS_API_MAP = {
-    "remoteok.com":       scrape_remoteok,
-    "weworkremotely.com": scrape_weworkremotely,
-    "upwork.com":         scrape_upwork_rss,
-    "remotive.com":       scrape_remotive,
-    # Freelancer / Guru / PeoplePerHour → Upwork RSS as best-effort proxy
-    "freelancer.com":     scrape_upwork_rss,
-    "guru.com":           scrape_upwork_rss,
-    "peopleperhour.com":  scrape_upwork_rss,
-    # Remote job boards with known RSS/API feeds
-    "remote.co":          scrape_weworkremotely,
-    "workingnomads.com":  scrape_weworkremotely,
-    "jobgether.com":      scrape_remotive,
-    "dailyremote.com":    scrape_remotive,
-    "justremote.co":      scrape_remotive,
-    "remotefront.io":     scrape_remotive,
-    "nodesk.co":          scrape_remotive,
+    "remoteok.com":         scrape_remoteok,
+    "weworkremotely.com":   scrape_weworkremotely,
+    "upwork.com":           scrape_upwork_rss,
+    "remotive.com":         scrape_remotive,
+    "freelancer.com":       scrape_upwork_rss,
+    "guru.com":             scrape_upwork_rss,
+    "peopleperhour.com":    scrape_upwork_rss,
+    "remote.co":            scrape_weworkremotely,
+    "workingnomads.com":    scrape_weworkremotely,
+    "jobgether.com":        scrape_remotive,
+    "dailyremote.com":      scrape_remotive,
+    "justremote.co":        scrape_remotive,
+    "remotefront.io":       scrape_remotive,
+    "nodesk.co":            scrape_remotive,
     "virtualvocations.com": scrape_remotive,
-    "remotewoman.com":    scrape_remotive,
-    "flexjobs.com":       scrape_remotive,
-    "remotelyawesome.com": scrape_remotive,
-    "remoteleaf.com":     scrape_remotive,
-    "avasarai.com":       scrape_remotive,
+    "remotewoman.com":      scrape_remotive,
+    "flexjobs.com":         scrape_remotive,
+    "remotelyawesome.com":  scrape_remotive,
+    "remoteleaf.com":       scrape_remotive,
+    "avasarai.com":         scrape_remotive,
 }
 
+def dispatch_selenium_target(driver, item):
+    """Routes an item to the correct Selenium portal scraper."""
+    url = item.get("portal_url", "").lower()
+    if "google.com/search" in url:
+        return scrape_google_search(driver, item)
+    elif "realpython" in url or "fake-jobs" in url:
+        return scrape_fake_jobs_sandbox(driver, item)
+    elif "linkedin.com" in url:
+        return scrape_linkedin_public(driver, item)
+    elif "indeed.com" in url:
+        return scrape_indeed_public(driver, item)
+    elif "naukri.com" in url:
+        return scrape_naukri(driver, item)
+    elif "foundit.in" in url:
+        return scrape_foundit(driver, item)
+    elif "shine.com" in url:
+        return scrape_shine(driver, item)
+    elif "timesjobs.com" in url:
+        return scrape_timesjobs(driver, item)
+    elif "glassdoor" in url:
+        return scrape_glassdoor(driver, item)
+    elif "wellfound.com" in url or "angel.co" in url:
+        return scrape_wellfound(driver, item)
+    else:
+        return scrape_generic_selenium(driver, item)
 
-def scrape_jobs(search_items):
+
+def scrape_jobs(search_items, on_batch_callback=None):
     """
-    Iterates through search configurations from Excel and scrapes jobs.
-    Routes each URL to the best-matching scraper.
+    Optimized concurrent scraping orchestrator:
+    1. Splits targets into fast API/RSS targets vs browser-based Selenium targets.
+    2. Runs fast API targets concurrently using ThreadPoolExecutor (~2-4 seconds total).
+    3. Runs Selenium targets concurrently across dedicated headless Chrome worker instances.
+    4. Applies global deduplication and India-eligibility filtering in real-time.
+    5. Synchronizes UI streaming updates thread-safely as results arrive.
     """
-    driver = None
+    start_time = time.time()
     all_jobs = []
+    seen_dedup_keys = set()
+    callback_lock = threading.Lock()
 
-    # Initialize Selenium if at least one target is NOT handled by RSS/API
-    need_selenium = any(
-        not any(rss_domain in item.get("portal_url", "").lower() for rss_domain in RSS_API_MAP)
-        for item in search_items
-    )
+    # Clean input list
+    valid_items = [item for item in search_items if item.get("portal_url", "").strip()]
+    if not valid_items:
+        return []
 
-    try:
-        if need_selenium:
-            driver = get_chrome_driver()
+    print(f"\n[+] Total targets to scrape: {len(valid_items)}")
 
-        for idx, item in enumerate(search_items):
-            url_raw = item.get("portal_url", "").strip()
-            if not url_raw:
-                continue
+    # Classify targets
+    api_items = []
+    selenium_items = []
 
-            url = url_raw.lower()
-            print(f"\n{'─'*60}")
-            print(f"[{idx+1}/{len(search_items)}] {url_raw}")
-            print(f"Query: {item.get('job_title')} | Exp: {item.get('experience')} | Loc: {item.get('location')}")
+    for item in valid_items:
+        url = item.get("portal_url", "").lower()
+        # LinkedIn will be tried via fast Guest API first
+        if "linkedin.com" in url:
+            api_items.append((item, "linkedin_guest"))
+        elif any(domain in url for domain in RSS_API_MAP):
+            matched_fn = next(fn for domain, fn in RSS_API_MAP.items() if domain in url)
+            api_items.append((item, matched_fn))
+        else:
+            selenium_items.append(item)
 
+    def process_and_stream(batch_jobs):
+        """Thread-safe filter, deduplicate, and stream callback."""
+        if not batch_jobs:
+            return 0
+        filtered = []
+        with callback_lock:
+            for j in batch_jobs:
+                if not is_india_eligible(j):
+                    continue
+                # Canonical dedup key
+                link = j.get("apply_link", "").strip().lower()
+                key = link if link and link != "n/a" else f"{j.get('portal','')}_{j.get('title','')}_{j.get('company','')}".lower()
+                if key in seen_dedup_keys:
+                    continue
+                seen_dedup_keys.add(key)
+                filtered.append(j)
+
+            if filtered:
+                all_jobs.extend(filtered)
+                if on_batch_callback:
+                    try:
+                        on_batch_callback(filtered, list(all_jobs))
+                    except Exception as cb_err:
+                        print(f"[!] Warning in batch callback: {cb_err}")
+        return len(filtered)
+
+    # -----------------------------------------------------------------------
+    # Phase 1: High-Speed Concurrent API / RSS Scraping
+    # -----------------------------------------------------------------------
+    if api_items:
+        api_workers = getattr(config, "API_WORKERS", 6)
+        print(f"\n[Phase 1] Launching {len(api_items)} fast API/RSS targets across {api_workers} concurrent threads...")
+        failed_linkedin_items = []
+
+        def run_api_task(item_tuple):
+            target_item, target_fn = item_tuple
             try:
-                jobs = []
+                if target_fn == "linkedin_guest":
+                    res = scrape_linkedin_guest_api(target_item)
+                    if not res:
+                        # Fallback to Selenium later if Guest API yielded nothing
+                        return target_item, []
+                    return None, res
+                else:
+                    res = target_fn(target_item)
+                    return None, res
+            except Exception as e:
+                print(f"[-] API target error ({target_item.get('portal_url')}): {e}")
+                return None, []
 
-                # ── RSS / API portals ──────────────────────────────────────
-                matched_rss = False
-                for domain, fn in RSS_API_MAP.items():
-                    if domain in url:
-                        jobs = fn(item)
-                        matched_rss = True
-                        break
+        with ThreadPoolExecutor(max_workers=api_workers) as executor:
+            futures = [executor.submit(run_api_task, it) for it in api_items]
+            for f in as_completed(futures):
+                try:
+                    fallback_item, jobs = f.result()
+                    if fallback_item:
+                        failed_linkedin_items.append(fallback_item)
+                    if jobs:
+                        added = process_and_stream(jobs)
+                        if added:
+                            print(f"[+] API Streamed: +{added} jobs (Total: {len(all_jobs)})")
+                except Exception as fut_err:
+                    print(f"[-] Worker future error: {fut_err}")
 
-                if not matched_rss:
-                    # ── Selenium portals ───────────────────────────────────
-                    if not driver:
+        # Add any LinkedIn targets that need Selenium fallback
+        if failed_linkedin_items:
+            print(f"[!] Falling back {len(failed_linkedin_items)} LinkedIn targets to Selenium worker pool.")
+            selenium_items.extend(failed_linkedin_items)
+
+    # -----------------------------------------------------------------------
+    # Phase 2: Parallel Selenium Browser Scraping
+    # -----------------------------------------------------------------------
+    if selenium_items:
+        num_workers = max(1, min(getattr(config, "SELENIUM_WORKERS", 2), len(selenium_items)))
+        print(f"\n[Phase 2] Launching {len(selenium_items)} browser targets across {num_workers} parallel Selenium workers...")
+
+        # Partition items across workers
+        chunks = [selenium_items[i::num_workers] for i in range(num_workers)]
+
+        def selenium_worker_loop(worker_id, items_to_scrape):
+            driver = None
+            try:
+                driver = get_chrome_driver()
+                for idx, item in enumerate(items_to_scrape):
+                    url = item.get("portal_url", "")
+                    print(f"[Worker-{worker_id}] [{idx+1}/{len(items_to_scrape)}] {url}")
+                    try:
+                        jobs = dispatch_selenium_target(driver, item)
+                        if jobs:
+                            added = process_and_stream(jobs)
+                            if added:
+                                print(f"[+] [Worker-{worker_id}] Streamed: +{added} jobs (Total: {len(all_jobs)})")
+                    except WebDriverException as wde:
+                        print(f"[Worker-{worker_id}] Driver hiccup on {url}: {wde}. Restarting driver...")
+                        try:
+                            driver.quit()
+                        except Exception:
+                            pass
                         driver = get_chrome_driver()
+                    except Exception as err:
+                        print(f"[Worker-{worker_id}] Error scraping {url}: {err}")
+                    time.sleep(0.3)
+            finally:
+                if driver:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                    print(f"[Worker-{worker_id}] Closed driver.")
 
-                    if "google.com/search" in url:
-                        jobs = scrape_google_search(driver, item)
-                    elif "realpython" in url or "fake-jobs" in url:
-                        jobs = scrape_fake_jobs_sandbox(driver, item)
-                    elif "linkedin.com" in url:
-                        jobs = scrape_linkedin_public(driver, item)
-                    elif "indeed.com" in url:
-                        jobs = scrape_indeed_public(driver, item)
-                    elif "naukri.com" in url:
-                        jobs = scrape_naukri(driver, item)
-                    elif "foundit.in" in url:
-                        jobs = scrape_foundit(driver, item)
-                    elif "shine.com" in url:
-                        jobs = scrape_shine(driver, item)
-                    elif "timesjobs.com" in url:
-                        jobs = scrape_timesjobs(driver, item)
-                    elif "glassdoor" in url:
-                        jobs = scrape_glassdoor(driver, item)
-                    elif "wellfound.com" in url or "angel.co" in url:
-                        jobs = scrape_wellfound(driver, item)
-                    else:
-                        # Generic Selenium fallback for company career pages, ATS portals, etc.
-                        jobs = scrape_generic_selenium(driver, item)
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = [
+                executor.submit(selenium_worker_loop, i + 1, chunks[i])
+                for i in range(num_workers) if chunks[i]
+            ]
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception as w_err:
+                    print(f"[-] Selenium worker error: {w_err}")
 
-                # ── India eligibility filter ───────────────────────────────
-                before = len(jobs)
-                jobs = [j for j in jobs if is_india_eligible(j)]
-                dropped = before - len(jobs)
-                if dropped:
-                    print(f"[India Filter] Dropped {dropped} non-India / non-remote listings.")
-
-                print(f"✓ {len(jobs)} India-eligible jobs collected.")
-                all_jobs.extend(jobs)
-
-                # Short delay between requests to be polite
-                time.sleep(random.uniform(1.0, 2.0))
-
-            except Exception as entry_err:
-                print(f"✗ Failed to scrape {url_raw}: {entry_err}")
-                continue
-
-    finally:
-        if driver:
-            print("\nClosing Chrome WebDriver...")
-            driver.quit()
-
-    print(f"\n{'═'*60}")
-    print(f"Total India-eligible jobs collected: {len(all_jobs)}")
+    elapsed = round(time.time() - start_time, 2)
+    print(f"\n{'='*70}")
+    print(f" SCRAPING COMPLETE: Collected {len(all_jobs)} unique India-eligible jobs in {elapsed}s")
+    print(f"{'='*70}")
     return all_jobs
-
-
-

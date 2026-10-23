@@ -68,7 +68,7 @@ def generate_html_body(jobs, report_type):
         </tr>
         """
 
-    html = f"""
+    html_content = f"""
     <html>
     <head>
         <meta charset="utf-8">
@@ -179,7 +179,7 @@ def generate_html_body(jobs, report_type):
     </body>
     </html>
     """
-    return html
+    return html_content
 
 def send_jobs_email(jobs, report_type="Permanent"):
     """

@@ -1,0 +1,436 @@
+{
+  "updated_at": "2026-10-23 18:08:30",
+  "total_count": 37,
+  "stats": {
+    "portals": {
+      "Glassdoor": 9,
+      "Indeed": 21,
+      "LinkedIn": 7
+    },
+    "job_types": {
+      "permanent": 37,
+      "freelance": 0
+    },
+    "top_locations": {
+      "Not specified": 21,
+      "Pune Division": 6,
+      "Bengaluru": 2,
+      "Hyderābād": 2,
+      "Pune": 1,
+      "Gurgaon": 1,
+      "India": 1,
+      "Indore": 1,
+      "Chennai": 1,
+      "Pune District": 1
+    }
+  },
+  "jobs": [
+    {
+      "id": "job-1",
+      "portal": "Glassdoor",
+      "title": ".NET Full Stack Developer with Angular",
+      "company": "Verveba Telecom",
+      "location": "Pune",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-with-angular-verveba-telecom-JV_IC2856202_KO0,37_KE38,53.htm?jl=1010253578252",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-2",
+      "portal": "Glassdoor",
+      "title": ".NET Full Stack Developer",
+      "company": "TMC Pvt Ltd",
+      "location": "Bengaluru",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-tmc-pvt-ltd-JV_IC2940587_KO0,24_KE25,36.htm?jl=1010289170116",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-3",
+      "portal": "Glassdoor",
+      "title": ".NET Full Stack Developer",
+      "company": "Carvewing",
+      "location": "Bengaluru",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-carvewing-JV_IC2940587_KO0,24_KE25,34.htm?jl=1007577157324",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-4",
+      "portal": "Glassdoor",
+      "title": ".Net Full Stack Developer",
+      "company": "MetaDesign Solutions",
+      "location": "Gurgaon",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-metadesign-solutions-JV_IC2921225_KO0,24_KE25,45.htm?jl=1010285486155",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-5",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=d9afc88f5c049c6d&bb=YKSahP_QOR2BrlEPW1bY-pNTHC1apHWfYwpaAorXXcfbRYG6oVqcQ3but_8oUutFJyW5sLncUbwbcT3i5cIgsHziJGT0_s3Sy5SqC6MUYWuizUuQQ5MMNYKJ6cSLIMhq&xkcb=SoBE67M2d0QpkET7jx0LbzkdCdPP&fccid=1f5c7702a1640572&cmp=Steerlean-Consultancy-Services-Pvt.-Ltd.&ti=.NET+Developer&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-6",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=8da132067a94c560&bb=YKSahP_QOR2BrlEPW1bY-j2I3WCOkd8Fp9nHf40gU9m9DCgbBnGCVAb6Tyy_ZKGoNbWSjGDynLFSYkFSR84DQ7RcAbk_A-nfin24XId7gybLNNftdeC0w1ZZ0LXG1Jsn&xkcb=SoDw67M2d0QpkET7jx0KbzkdCdPP&fccid=8d25321c1defe73f&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-7",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=5e65a788077721ca&bb=YKSahP_QOR2BrlEPW1bY-ir81OGfYg3jXWf395rxzh9_MAdtkFXuehHDVG74yhZ5hP5-zS5ZMPKe6rT0G4_zqwNY5sMkGt_il_q63lTiQHresruOwPrNBLaEo0amZT2_&xkcb=SoBt67M2d0QpkET7jx0JbzkdCdPP&fccid=ea6bb53f0b18b8f2&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-8",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=807e439b26cfd6ac&bb=YKSahP_QOR2BrlEPW1bY-n8kbci8poWDGgHv6vIh0ew4UuLT25y58sf0wbpqWDQa2LOW9-cYAlCNigDUmeBc4M3xtEmsA-qKAG5bvwI50yw1M085TAkD_6hTfRhLmNEU&xkcb=SoAB67M2d0QpkEz7jx0LbzkdCdPP&fccid=03cacc905f5db444&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-9",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=766ea748f5354651&bb=YKSahP_QOR2BrlEPW1bY-ir81OGfYg3jmOw7b2Kgxm4NJp1sP-MRqJRbqn9x09Y1cDBlt_N_ty5hgACgqNYfSdfpXNq-wrWjF6zfmnrcWgx4lZ284gQ4QPR38E-7gjoO&xkcb=SoC167M2d0QpkEz7jx0KbzkdCdPP&fccid=99b9b1212188b67d&cmp=Rosemallow-technologies&ti=.NET+Developer&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-10",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=b0d00ff6f2716b68&bb=YKSahP_QOR2BrlEPW1bY-nypeiEkCXmFA4ctiZBTkKC1WfOIjL1S3dpxtV-c3nVp61z_TTW25RishZdOG3D4FoZ25qduxkTqH3oMFPm6dvHwhzsV25tWhNLT9zKLKX_G&xkcb=SoAo67M2d0QpkEz7jx0JbzkdCdPP&fccid=c5679bf29a1db253&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-11",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=218f0f4a6447640b&bb=YKSahP_QOR2BrlEPW1bY-qiq6eMtvk2PMA8_AStoIRtbOix-Dl5v2erioTMWRv2FC_UEIlYjFILgbEzzaPOyhdTjq9KCnpNNGUw_q8_8-_w6FMNjw_tUhz5w4-Sv3IYx&xkcb=SoCc67M2d0QpkEz7jx0IbzkdCdPP&fccid=15f3dea53ebe3c30&cmp=Countless-services-private-limited&ti=.NET+Developer&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-12",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=799784c7fd9c5c05&bb=YKSahP_QOR2BrlEPW1bY-qrNAiE5DtEzVGNv67h0ac9-K5P6mxqxMbOF9qYeUQnjoDRFowDO-Bs1EvzDtppkcjugJVadw8CRGxrA4jTsfrxm43tEET011062WcVCCVlV&xkcb=SoAS67M2d0QpkEz7jx0PbzkdCdPP&fccid=2fad1b49105da4f2&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-13",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=e87d802dead8432d&bb=YKSahP_QOR2BrlEPW1bY-qudCTHZP3BnHlNk3hsx3ChKabkJdcnOh6bAYFRB-HTSsDSvJp0ofL0whsEv32DD4cP8X_qk9JTu3luqV61p9NLTldyEZYIhwdUL89K0-EjX&xkcb=SoCm67M2d0QpkEz7jx0ObzkdCdPP&fccid=2fad1b49105da4f2&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-14",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=52d1b74ff1a5d229&bb=YKSahP_QOR2BrlEPW1bY-pBwA0tNns7IdpdlPxYKOIDxedP6BKooRbYf4_8ymLkazJWQNbkmHpDPVZBnGlU7ceAKK7zh4qq55rUY0Oz6KG1c26JT-TDwDO95Li__TtHB&xkcb=SoA767M2d0QpkEz7jx0NbzkdCdPP&fccid=0d1386ca25efa609&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-15",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=79e3a0117be104c0&bb=YKSahP_QOR2BrlEPW1bY-rpxjdquZm9ouDy05Uk8S83azceN5JuFAJ4Mu-zBpbGqWMV8IjCOvzyaoKRYAAVbd9FImYTfeKbBOAq9he8oQrKjWTIsSEtzcn7VVsREaPIJ&xkcb=SoCP67M2d0QpkEz7jx0MbzkdCdPP&fccid=8d25321c1defe73f&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-16",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=467ae9c642e93e56&bb=YKSahP_QOR2BrlEPW1bY-pWHDuKxNxrh4CrCnmo3yzSDYdN1ajygb72k2T1pwhbvxAylWUTSX40gRqhy4x71ukKvAJBlJx49jk7OUB8SML1OhcPFHRcxMyl7urExyUab&xkcb=SoBm67M2d0QpkEz7jx0DbzkdCdPP&fccid=03cacc905f5db444&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-17",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/viewjob?jk=a1b2c3d4e5f67890",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-18",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=42e34127a672abcf&bb=YKSahP_QOR2BrlEPW1bY-pFdrhCSNmmVXs5k0ViQRQBPoxLWLEIdLcgTqx9nZbk6Xc8zUuh9H637nRu5831lE35qO31KCdOOGAO8vkJQyLxraQqujM5LAjaynrjYZeQE&xkcb=SoDS67M2d0QpkEz7jx0CbzkdCdPP&fccid=1174e11d97fd620e&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-19",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=95a4ff7430f1548d&bb=YKSahP_QOR2BrlEPW1bY-l6aqphC702ta3SP7vof5n73WBBoNlLam7xc0feKl2BnY5pFV7_9rZuPJBOUNhKVM2sxM3v4Oc327AlemUIatxpe84LqFeC05cWb7Fy_xOoE&xkcb=SoBP67M2d0QpkEz7jx0BbzkdCdPP&fccid=91444a28cb181211&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-20",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "5-8 years",
+      "apply_link": "https://in.indeed.com/rc/clk?jk=2aa74008fc68d77c&bb=YKSahP_QOR2BrlEPW1bY-tJQhkc9oJgfnUb7ykUnSym19GsWOV87-mOddMXVK7vP3n24YY2XpGtnanS4TFSexmC6fsdFrISn-6i_TqMUz--9SO5FuC51QbjFW31_h5SX&xkcb=SoD767M2d0QpkEz7jx0AbzkdCdPP&fccid=b90433ed96d63887&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-21",
+      "portal": "Glassdoor",
+      "title": ".Net Full Stack Developer",
+      "company": "Truviq Systems",
+      "location": "Hyderābād",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-truviq-systems-JV_IC2865319_KO0,24_KE25,39.htm?jl=1010297997067",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-22",
+      "portal": "Glassdoor",
+      "title": "Senior .NET Full Stack Developer",
+      "company": "Eins Technology",
+      "location": "India",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/senior-net-full-stack-developer-eins-technology-JV_KO0,31_KE32,47.htm?jl=1010205531106",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-23",
+      "portal": "Glassdoor",
+      "title": ".NET Full Stack Developer",
+      "company": "Cyber Infrastructure (CIS)",
+      "location": "Indore",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-cyber-infrastructure-cis-JV_IC2876676_KO0,24_KE25,49.htm?jl=1010302372870",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-24",
+      "portal": "Glassdoor",
+      "title": ".NET Full Stack Developer",
+      "company": "Persistent Systems",
+      "location": "Hyderābād",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-persistent-systems-JV_IC2865319_KO0,24_KE25,43.htm?jl=1010272991493",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-25",
+      "portal": "Glassdoor",
+      "title": ".Net Full Stack Developer",
+      "company": "E-Merge tech",
+      "location": "Chennai",
+      "experience": "5-8 years",
+      "apply_link": "https://www.glassdoor.co.in/job-listing/net-full-stack-developer-e-merge-tech-JV_IC2833209_KO0,24_KE25,37.htm?jl=1009492088180",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-26",
+      "portal": "LinkedIn",
+      "title": ".Net Developer",
+      "company": "TS Infosoft",
+      "location": "Pune Division, Maharashtra, India",
+      "experience": "3-5 years",
+      "apply_link": "https://in.linkedin.com/jobs/view/net-developer-at-ts-infosoft-4306121410",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-27",
+      "portal": "LinkedIn",
+      "title": ".Net Developer",
+      "company": "Proventeq",
+      "location": "Pune Division, Maharashtra, India",
+      "experience": "3-5 years",
+      "apply_link": "https://in.linkedin.com/jobs/view/net-developer-at-proventeq-4139138369",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-28",
+      "portal": "LinkedIn",
+      "title": ".NET Developer",
+      "company": "Epergne Solutions",
+      "location": "Pune Division, Maharashtra, India",
+      "experience": "3-5 years",
+      "apply_link": "https://in.linkedin.com/jobs/view/net-developer-at-epergne-solutions-4375410285",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-29",
+      "portal": "LinkedIn",
+      "title": ".NET Developer",
+      "company": "Deqode",
+      "location": "Pune Division, Maharashtra, India",
+      "experience": "3-5 years",
+      "apply_link": "https://in.linkedin.com/jobs/view/net-developer-at-deqode-4341128108",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-30",
+      "portal": "LinkedIn",
+      "title": ".Net Developer –C#",
+      "company": "LatentBridge",
+      "location": "Pune Division, Maharashtra, India",
+      "experience": "3-5 years",
+      "apply_link": "https://in.linkedin.com/jobs/view/net-developer-%E2%80%93c%23-at-latentbridge-3884567313",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-31",
+      "portal": "LinkedIn",
+      "title": ".NET Developer",
+      "company": "JISA Softech Private Limited",
+      "location": "Pune Division, Maharashtra, India",
+      "experience": "3-5 years",
+      "apply_link": "https://in.linkedin.com/jobs/view/net-developer-at-jisa-softech-private-limited-4159881637",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-32",
+      "portal": "LinkedIn",
+      "title": "Dotnet/.NET Developer with Angular",
+      "company": "HCLTech",
+      "location": "Pune District, Maharashtra, India",
+      "experience": "3-5 years",
+      "apply_link": "https://in.linkedin.com/jobs/view/dotnet-net-developer-with-angular-at-hcltech-4432241772",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-33",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "3+ years",
+      "apply_link": "https://www.indeed.com/rc/clk?jk=9e2d39475a812250&bb=K5iQ-ALXMCmgmW6TstpjNn3tXnXFnc_Ec-fA3bLfxLuUOezVel0ROP5cdso2Y7BSkq7TPmWwCmGzrt_VfTngW0IYKdI6Aedu6f1UBnL-5WupHgp0VNtl7xSNDLUagNOOVOr59KMzGGgc-GerHJZiQiJ5ZzQ82QGL62bbd6x9Z5o%3D&xkcb=SoDY67M3hWnFSCSJ3h0LbzkdCdPP&fccid=a4e4e2eaf26690c9&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-34",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "3+ years",
+      "apply_link": "https://www.indeed.com/rc/clk?jk=04f0d7f99a5b402c&bb=K5iQ-ALXMCmgmW6TstpjNuEojG-8JiGr09T-CHTam47xhPKjyZ84Cw3s--loZjanvtPADbifSPtcOW2s5bplIbQwbkinb823Xjmh93mBSmofymQGq2ED-Zjgd5mObAe16ukzsmuthDBHkF3VrJarKStuwDpyQmwjJuzHuE9_3TM%3D&xkcb=SoBs67M3hWnFSCSJ3h0KbzkdCdPP&fccid=058806aea118d1e2&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-35",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "3+ years",
+      "apply_link": "https://www.indeed.com/rc/clk?jk=e0dc3bfa157a2ec9&bb=K5iQ-ALXMCmgmW6TstpjNtqev7FuAmmWwluHMwFbo3o0Oqqus2-WdZ4MI9viFye7xd7kVAaCBJ68db6mPeP92XTTaUAP_inXw7TOohphXdm_Vsk01DLB-d0xxxny7ZLc7W2KBgyKcEXb-F6r_aespxQyqBvHflBeQdZ3ooGmtHg%3D&xkcb=SoDx67M3hWnFSCSJ3h0JbzkdCdPP&fccid=d9b9208177142548&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-36",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "3+ years",
+      "apply_link": "https://www.indeed.com/rc/clk?jk=5f4b38f488737be6&bb=K5iQ-ALXMCmgmW6TstpjNrvTFnaNE7AITIq5BXlC9e2N3UDOSrVSU3LslaW5FwnEktyn5ddLOOOFxc1YMnCONJp55c5ptMf64EwPU7U-QgiWccAhXYKbPuySs3QYMI8snjIUYOThaaF_fHybz9GyIfeamY3DjKgs_V0Q9nqCNSY%3D&xkcb=SoBF67M3hWnFSCSJ3h0IbzkdCdPP&fccid=d9b9208177142548&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    },
+    {
+      "id": "job-37",
+      "portal": "Indeed",
+      "title": "Job Opening",
+      "company": "Company Confidential",
+      "location": "Not specified",
+      "experience": "3+ years",
+      "apply_link": "https://www.indeed.com/rc/clk?jk=db1005b9c3690567&bb=K5iQ-ALXMCmgmW6TstpjNkmITf1RcYMyC0aPI1NGkVkdhe5Tfvm9GaLN_hMguhwT7XAFnWRIm-NM_3yAYiDIJ76B-PG_q11o_TlTTJBvNtONfgA_2YcAy9I_EDKcPq3oc9Fo80ZDhtZ8GmQ7Bz1yx2XqPKg-7g9qEJu9z5nMGFg%3D&xkcb=SoDL67M3hWnFSCSJ3h0PbzkdCdPP&fccid=d9b9208177142548&vjs=3",
+      "recruiter_contact": "Refer to Apply Link",
+      "job_type": "permanent"
+    }
+  ]
+}

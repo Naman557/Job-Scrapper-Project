@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Radar | Interactive Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         SEARCH MODAL: Shown on launch / when user clicks "New Search"
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="searchModal" class="search-modal-overlay active">
+        <div class="search-modal">
+            <div class="modal-brand">
+                <div class="brand-logo modal-logo">
+                    <span class="logo-pulse"></span>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                        <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                    </svg>
+                </div>
+                <h2>Job Radar</h2>
+                <p class="modal-subtitle">Search across 13+ job boards simultaneously</p>
+            </div>
+
+            <form id="searchForm" class="search-form" autocomplete="off">
+                <div class="form-group">
+                    <label for="modalJobTitle">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        Job Title / Skill
+                    </label>
+                    <input type="text" id="modalJobTitle" placeholder="e.g. .NET Developer, Python, Full Stack, AI Engineer..." value=".NET Developer" required>
+                </div>
+
+                <div class="form-row-2col">
+                    <div class="form-group">
+                        <label for="modalExperience">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                            Years of Experience
+                        </label>
+                        <select id="modalExperience">
+                            <option value="Fresher">Fresher (0 years)</option>
+                            <option value="0-1 years">0-1 years</option>
+                            <option value="1-3 years">1-3 years</option>
+                            <option value="3-5 years" selected>3-5 years</option>
+                            <option value="5-8 years">5-8 years</option>
+                            <option value="8-12 years">8-12 years</option>
+                            <option value="12+ years">12+ years</option>
+                            <option value="Not Specified">Any / Not Specified</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="modalTimeRange">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                            Posted Within
+                        </label>
+                        <select id="modalTimeRange">
+                            <option value="1">Last 24 hours</option>
+                            <option value="3">Last 3 days</option>
+                            <option value="7">Last 7 days</option>
+                            <option value="14" selected>Last 14 days</option>
+                            <option value="30">Last 30 days</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="modalLocation">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                        Primary Location
+                    </label>
+                    <input type="text" id="modalLocation" placeholder="e.g. Pune, India / Bangalore / Remote" value="Pune, India">
+                </div>
+
+                <button type="submit" id="startScrapeBtn" class="btn btn-primary btn-lg">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    Start Scraping All Job Boards
+                </button>
+            </form>
+
+            <p class="modal-footer-text">Searches LinkedIn, Indeed, Naukri, Foundit, Shine, TimesJobs, Glassdoor, RemoteOK, WeWorkRemotely, Upwork, Remotive, Wellfound &amp; more</p>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         FULL-SCREEN LOADER: Shown while scraping is in progress
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="scrapeLoader" class="scrape-loader-overlay" style="display: none;">
+        <div class="loader-content">
+            <div class="loader-spinner">
+                <div class="orbit-ring"></div>
+                <div class="orbit-ring orbit-ring-2"></div>
+                <div class="orbit-core"></div>
+            </div>
+            <h2 id="loaderTitle">Scraping All Job Boards...</h2>
+            <p id="loaderSubtitle" class="loader-subtitle">Searching for "<span id="loaderQuery">.NET Developer</span>"</p>
+            <div class="loader-progress-bar">
+                <div class="loader-progress-fill" id="loaderProgressFill"></div>
+            </div>
+            <p id="loaderStatus" class="loader-status">Initializing concurrent scrapers...</p>
+            <p id="loaderTimer" class="loader-timer">Elapsed: 0s</p>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         MAIN DASHBOARD (hidden until scraping completes)
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="dashboardContainer" style="display: none;">
+        <!-- Top Navigation / Brand Bar -->
+        <header class="app-header">
+            <div class="header-container">
+                <div class="brand">
+                    <div class="brand-logo">
+                        <span class="logo-pulse"></span>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                        </svg>
+                    </div>
+                    <div class="brand-text">
+                        <h1>Job Radar</h1>
+                        <span class="brand-tag">Real-time Automated Aggregator</span>
+                    </div>
+                </div>
+
+                <div class="header-actions">
+                    <div class="live-status-pill">
+                        <span class="status-dot"></span>
+                        <span id="lastUpdatedText">Loading data...</span>
+                    </div>
+                    <button id="newSearchBtn" class="btn btn-accent" title="Start a new custom search">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        <span>New Search</span>
+                    </button>
+                    <button id="refreshBtn" class="btn btn-secondary" title="Re-sync data from Excel sources">
+                        <svg class="spin-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        <span>Refresh</span>
+                    </button>
+                    <button id="exportCsvBtn" class="btn btn-primary" title="Export currently filtered listings to CSV">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        <span>Export CSV</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main App Container -->
+        <main class="main-container">
+            <!-- Stats Summary Section -->
+            <section class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon icon-jobs">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">Total Listings</span>
+                        <span class="stat-number" id="statTotalJobs">0</span>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon icon-portals">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">Portals Scraped</span>
+                        <span class="stat-number" id="statPortalsCount">0</span>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon icon-priority">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"></path>
+                            <circle cx="12" cy="10" r="3"></circle>
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">Primary Hub (Pune)</span>
+                        <span class="stat-number" id="statPuneCount">0</span>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon icon-types">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">Permanent / Freelance</span>
+                        <span class="stat-number" id="statTypesRatio">0 / 0</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Search & Advanced Filter Bar -->
+            <section class="controls-card">
+                <div class="search-row">
+                    <div class="search-input-wrapper">
+                        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="searchInput" placeholder="Filter results by role, company, tech stack..." autocomplete="off">
+                        <button id="clearSearchBtn" class="clear-btn" style="display: none;" title="Clear search">✕</button>
+                    </div>
+                    <div class="sort-selector">
+                        <label for="sortBySelect">Sort by:</label>
+                        <select id="sortBySelect">
+                            <option value="location_priority">Location Priority (Pune first)</option>
+                            <option value="company_asc">Company (A-Z)</option>
+                            <option value="title_asc">Title (A-Z)</option>
+                            <option value="portal_asc">Portal Name</option>
+                        </select>
+                    </div>
+                    <div class="view-toggle">
+                        <button id="viewGridBtn" class="toggle-btn active" title="Grid View">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect>
+                            </svg>
+                        </button>
+                        <button id="viewTableBtn" class="toggle-btn" title="Table View">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line>
+                                <line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="filters-row">
+                    <div class="filter-group">
+                        <span class="filter-group-label">Source Portal:</span>
+                        <div class="filter-pills" id="portalPillsContainer">
+                            <button class="pill active" data-portal="all">All Portals</button>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-group-label">Placement Type:</span>
+                        <div class="filter-pills" id="typePillsContainer">
+                            <button class="pill active" data-type="all">All Types</button>
+                            <button class="pill" data-type="permanent">Permanent</button>
+                            <button class="pill" data-type="freelance">Freelance / Gig</button>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-group-label">Location:</span>
+                        <div class="filter-pills" id="locationPillsContainer">
+                            <button class="pill active" data-location="all">All Locations</button>
+                            <button class="pill" data-location="pune">Pune Hub</button>
+                            <button class="pill" data-location="remote">Remote</button>
+                            <button class="pill" data-location="hybrid">Hybrid</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="results-meta">
+                <span id="resultsCount">Showing 0 matching jobs</span>
+                <button id="resetAllFiltersBtn" class="text-btn">Reset All Filters</button>
+            </section>
+
+            <section id="jobsGrid" class="jobs-grid"></section>
+
+            <section id="jobsTableSection" class="table-section" style="display: none;">
+                <div class="table-responsive">
+                    <table class="jobs-table">
+                        <thead>
+                            <tr>
+                                <th>Portal</th><th>Role / Title</th><th>Company</th>
+                                <th>Location</th><th>Experience</th><th>Recruiter / Contact</th>
+                                <th style="text-align: right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobsTableBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <div id="emptyState" class="empty-state" style="display: none;">
+                <div class="empty-icon">🔍</div>
+                <h3>No matching job listings found</h3>
+                <p>Try clearing your search query or switching portal and location filters.</p>
+                <button class="btn btn-secondary" onclick="document.getElementById('resetAllFiltersBtn').click()">Clear All Filters</button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast" class="toast">Link copied to clipboard!</div>
+
+    <script src="app.js"></script>
+</body>
+</html>

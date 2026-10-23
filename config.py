@@ -17,6 +17,13 @@ MAX_JOBS_PER_PORTAL = int(os.getenv("MAX_JOBS_PER_PORTAL", 10))
 LOOP_INTERVAL = int(os.getenv("LOOP_INTERVAL", 3600))
 MAX_AGE_DAYS = int(os.getenv("MAX_AGE_DAYS", 14))
 
+# Performance & Concurrency Config
+SELENIUM_WORKERS = int(os.getenv("SELENIUM_WORKERS", 2))
+API_WORKERS = int(os.getenv("API_WORKERS", 6))
+PAGE_LOAD_TIMEOUT = int(os.getenv("PAGE_LOAD_TIMEOUT", 15))
+DISABLE_IMAGES = os.getenv("DISABLE_IMAGES", "True").lower() in ("true", "1", "yes")
+FAST_PAGE_LOAD = os.getenv("FAST_PAGE_LOAD", "True").lower() in ("true", "1", "yes")
+
 def validate_config():
     """
     Validates that the required environment variables are set.
