@@ -50,76 +50,68 @@ def get_location_weight(location_str):
         
     return len(priorities) + 1
 
-def generate_portal_targets(job_title=".NET Developer", experience="3-5 years", location="Pune, India", max_age_days=14):
-    """
-    Dynamically generates targets across major job portals based on user search criteria.
-    """
+def generate_portal_targets(job_title=".NET Developer", experience="5-8 years", location="Pune, India", max_age_days=14):
+    """Build search targets from every portal URL configured in jobs_input.xlsx."""
     clean_title = (job_title or ".NET Developer").strip()
-    clean_exp = (experience or "3-5 years").strip()
+    clean_exp = (experience or "5-8 years").strip()
     clean_loc = (location or "Pune, India").strip()
-    
-    title_slug = re.sub(r'[^a-zA-Z0-9]+', '-', clean_title.lower()).strip('-')
-    loc_slug = re.sub(r'[^a-zA-Z0-9]+', '-', clean_loc.lower()).strip('-')
-    enc_title = urllib.parse.quote(clean_title)
-    enc_loc = urllib.parse.quote(clean_loc)
+    targets = read_jobs_sheet("jobs_input.xlsx")
+    search_keys = {"q", "keywords", "query", "txtkeywords", "keyword"}
+    location_keys = {"l", "location", "locations", "txtlocation", "loc"}
+    slug_title = clean_title.lower().replace(".net", "dot-net")
+    title_slug = re.sub(r"[^a-zA-Z0-9]+", "-", slug_title).strip("-")
 
-    targets = [
-        # Major India Portals
-        {
-            "portal_url": f"https://www.linkedin.com/jobs/search?keywords={enc_title}&location={enc_loc}",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        {
-            "portal_url": f"https://in.indeed.com/jobs?q={enc_title}&l={enc_loc}",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        {
-            "portal_url": f"https://www.naukri.com/{title_slug}-jobs-in-{loc_slug}",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        {
-            "portal_url": f"https://www.foundit.in/srp/results?query={enc_title}&locations={enc_loc}",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        {
-            "portal_url": f"https://www.shine.com/job-search/{title_slug}-jobs-in-{loc_slug}",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        {
-            "portal_url": f"https://www.timesjobs.com/candidate/job-search.html?searchType=personalizedSearch&from=submit&txtKeywords={enc_title}&txtLocation={enc_loc}",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        {
-            "portal_url": f"https://www.glassdoor.co.in/Job/jobs.htm?sc.keyword={enc_title}&locT=C&locKeyword={enc_loc}",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        # Remote & Freelance Portals
-        {
-            "portal_url": "https://remoteok.com",
-            "job_title": clean_title, "experience": clean_exp, "location": "Remote"
-        },
-        {
-            "portal_url": "https://weworkremotely.com",
-            "job_title": clean_title, "experience": clean_exp, "location": "Remote"
-        },
-        {
-            "portal_url": "https://www.upwork.com/",
-            "job_title": clean_title, "experience": clean_exp, "location": "Remote"
-        },
-        {
-            "portal_url": "https://remotive.com/remote-jobs/software-dev",
-            "job_title": clean_title, "experience": clean_exp, "location": "Remote"
-        },
-        {
-            "portal_url": "https://wellfound.com/jobs",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        },
-        # Testing Sandbox
-        {
-            "portal_url": "https://realpython.github.io/fake-jobs/",
-            "job_title": clean_title, "experience": clean_exp, "location": clean_loc
-        }
-    ]
+    for target in targets:
+        configured_location = target.get("location", "")
+        target_location = (
+            configured_location
+            if "remote" in configured_location.lower()
+            else clean_loc
+        )
+        target["job_title"] = clean_title
+        target["experience"] = clean_exp
+        target["location"] = target_location
+
+        parsed = urllib.parse.urlsplit(target["portal_url"])
+        host = parsed.netloc.lower()
+        slug_location = re.sub(r",?\s*india$", "", target_location, flags=re.IGNORECASE)
+        location_slug = re.sub(
+            r"[^a-zA-Z0-9]+", "-", slug_location.lower()
+        ).strip("-")
+        query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        updated_query = []
+        for key, value in query:
+            normalized_key = key.lower()
+            if normalized_key in search_keys:
+                if "google.com/search" in target["portal_url"].lower() and normalized_key == "q":
+                    value = f"{clean_title} jobs {target_location}"
+                else:
+                    value = clean_title
+            elif normalized_key in location_keys:
+                value = target_location
+            updated_query.append((key, value))
+        path = parsed.path
+        if "naukri.com" in host:
+            path = f"/{title_slug}-jobs-in-{location_slug}"
+        elif "shine.com" in host:
+            path = f"/job-search/{title_slug}-jobs-in-{location_slug}"
+        elif "placementindia.com" in host:
+            path = f"/job-search/{title_slug}-jobs-in-{location_slug}.htm"
+        elif "glassdoor" in host:
+            path = "/Job/jobs.htm"
+            updated_query.extend([
+                ("sc.keyword", clean_title),
+                ("locT", "C"),
+                ("locKeyword", target_location),
+            ])
+        target["portal_url"] = urllib.parse.urlunsplit((
+            parsed.scheme,
+            parsed.netloc,
+            path,
+            urllib.parse.urlencode(updated_query),
+            parsed.fragment,
+        ))
+
     return targets
 
 def run_scraper_flow(custom_criteria=None, max_age_days=None):
@@ -150,7 +142,12 @@ def run_scraper_flow(custom_criteria=None, max_age_days=None):
                 return []
                 
         try:
-            search_criteria = read_jobs_sheet(excel_file)
+            search_criteria = generate_portal_targets(
+                job_title=".NET Developer",
+                experience="5-8 years",
+                location="Pune, India",
+                max_age_days=config.MAX_AGE_DAYS,
+            )
         except Exception as e:
             print(f"Error loading search configurations: {e}")
             return []
@@ -169,9 +166,9 @@ def run_scraper_flow(custom_criteria=None, max_age_days=None):
         print("No listings found matching search criteria. Updating UI with empty set.")
         try:
             from export_data import export_jobs_to_json
-            export_jobs_to_json()
-        except Exception:
-            pass
+            export_jobs_to_json(jobs=scraped_jobs)
+        except Exception as export_err:
+            print(f"[!] Warning syncing empty scrape results to UI: {export_err}")
         return []
         
     # 4. Filter, Consolidate and Route Listings (Permanent vs. Freelance)
@@ -223,7 +220,7 @@ def run_scraper_flow(custom_criteria=None, max_age_days=None):
     # 7. Fully export consolidated data to UI JSON now that all scraping is complete
     try:
         from export_data import export_jobs_to_json
-        export_jobs_to_json()
+        export_jobs_to_json(jobs=scraped_jobs)
         print(f"[+] All job boards scraped & consolidated! Successfully exported {len(scraped_jobs)} jobs to UI.")
     except Exception as export_err:
         print(f"[!] Warning syncing UI data: {export_err}")
@@ -274,33 +271,51 @@ def main():
     print(f"Max Age: {config.MAX_AGE_DAYS} days")
     print(f"Loop Interval: {config.LOOP_INTERVAL} seconds")
     
-    # 1. Start Web UI in background & open browser
+    # Start the UI first so the browser can show its loader during the initial scrape.
     try:
+        import run_ui
         from run_ui import start_ui_in_background
-        start_ui_in_background(port=5000, open_browser=True)
+        url = start_ui_in_background(port=5000, open_browser=False)
+        started = run_ui.trigger_background_scrape({
+            "job_title": ".NET Developer",
+            "experience": "5-8 years",
+            "max_age_days": config.MAX_AGE_DAYS,
+            "location": "Pune, India",
+        })
+        if not started:
+            raise RuntimeError("Could not start the initial portal search.")
+        import webbrowser
+        try:
+            webbrowser.open(url)
+        except Exception as browser_err:
+            print(f"[!] Could not open the UI automatically: {browser_err}")
     except Exception as ui_err:
-        print(f"[!] Warning launching Web UI: {ui_err}")
+        print(f"[!] Error starting the UI search workflow: {ui_err}")
+        return
 
-    # 2. Run execution loop
-    if config.LOOP_INTERVAL > 0:
-        print(f"Starting execution loop. Running every {config.LOOP_INTERVAL} seconds...")
-        try:
-            while True:
-                run_scraper_flow()
-                print(f"\n[+] Cycle complete. Web UI remains live at http://localhost:5000. Next run in {config.LOOP_INTERVAL}s...")
-                time.sleep(config.LOOP_INTERVAL)
-        except KeyboardInterrupt:
-            print("\n[!] Scraper loop stopped by user. Exiting.")
-            sys.exit(0)
-    else:
-        run_scraper_flow()
-        print("\n[+] Single run complete. Web UI is live at http://localhost:5000.")
-        print("Press Ctrl+C in terminal to stop.")
-        try:
-            while True:
+    try:
+        while True:
+            while run_ui.IS_SCRAPING:
                 time.sleep(1)
-        except KeyboardInterrupt:
-            print("\n[!] Exiting.")
+
+            if config.LOOP_INTERVAL > 0:
+                print(
+                    f"\n[+] Search complete. Next automatic search in "
+                    f"{config.LOOP_INTERVAL} seconds..."
+                )
+                time.sleep(config.LOOP_INTERVAL)
+                if not run_ui.trigger_background_scrape({
+                    "job_title": ".NET Developer",
+                    "experience": "5-8 years",
+                    "max_age_days": config.MAX_AGE_DAYS,
+                    "location": "Pune, India",
+                }):
+                    print("[!] Automatic search skipped because another scrape is active.")
+            else:
+                time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[!] Scraper loop stopped by user. Exiting.")
+        sys.exit(0)
 
 if __name__ == '__main__':
     main()

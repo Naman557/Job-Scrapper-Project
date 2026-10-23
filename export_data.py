@@ -7,42 +7,53 @@ import pandas as pd
 def normalize_column_name(col):
     return str(col).strip().lower().replace(" ", "_")
 
-def export_jobs_to_json(output_path=os.path.join("ui", "data", "jobs.json")):
+def export_jobs_to_json(output_path=os.path.join("ui", "data", "jobs.json"), jobs=None):
     """
     Reads all available scraped job Excel spreadsheets, cleans and normalizes data,
     deduplicates listings by apply link, and exports to a JSON structure for the UI.
+    When jobs are provided, exports only those results instead of reading old spreadsheets.
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    excel_candidates = [
-        "scraped_jobs_permanent.xlsx",
-        "scraped_jobs_freelance.xlsx",
-        "scraped_jobs.xlsx"
-    ]
-    # Also find any timestamped fallback files
-    excel_candidates.extend(glob.glob("scraped_jobs_permanent_*.xlsx"))
-    excel_candidates.extend(glob.glob("scraped_jobs_freelance_*.xlsx"))
-    
-    existing_files = [f for f in excel_candidates if os.path.exists(f)]
-    
+
+    if jobs is None:
+        excel_candidates = [
+            "scraped_jobs_permanent.xlsx",
+            "scraped_jobs_freelance.xlsx",
+            "scraped_jobs.xlsx"
+        ]
+        # Also find any timestamped fallback files
+        excel_candidates.extend(glob.glob("scraped_jobs_permanent_*.xlsx"))
+        excel_candidates.extend(glob.glob("scraped_jobs_freelance_*.xlsx"))
+        existing_files = [f for f in excel_candidates if os.path.exists(f)]
+    else:
+        existing_files = []
+
     all_jobs = []
     seen_links = set()
-    
-    for file_path in existing_files:
+
+    sources = [(file_path, None) for file_path in existing_files]
+    if jobs is not None:
+        sources = [("current scrape results", jobs)]
+
+    for file_path, source_jobs in sources:
         try:
-            df = pd.read_excel(file_path)
-            if df.empty:
-                continue
+            if source_jobs is None:
+                df = pd.read_excel(file_path)
+                if df.empty:
+                    continue
+
+                # Rename columns to standard names
+                df.columns = [normalize_column_name(c) for c in df.columns]
+                rows = (row for _, row in df.iterrows())
+            else:
+                rows = iter(source_jobs)
                 
-            # Rename columns to standard names
-            df.columns = [normalize_column_name(c) for c in df.columns]
-            
             # Infer default job type from filename if missing
             default_type = "freelance" if "freelance" in file_path.lower() else "permanent"
-            if "job_type" not in df.columns:
+            if source_jobs is None and "job_type" not in df.columns:
                 df["job_type"] = default_type
                 
-            for _, row in df.iterrows():
+            for row in rows:
                 link = str(row.get("apply_link", "")).strip()
                 if not link or link.lower() in ["nan", "none", "n/a", ""]:
                     # Create unique key from title + company if link is missing

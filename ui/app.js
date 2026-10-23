@@ -85,17 +85,37 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─── INIT ─────────────────────────────────────────────────────
     init();
 
-    function init() {
+    async function init() {
         setupEventListeners();
 
-        // Check if we already have job data — if yes, skip modal
-        tryLoadExistingData().then(hasData => {
-            if (hasData) {
-                showDashboard();
-            } else {
-                showSearchModal();
+        try {
+            const response = await fetch('/api/status', { cache: 'no-store' });
+            if (response.ok) {
+                const status = await response.json();
+                if (status.is_scraping || status.running) {
+                    const info = status.info || {};
+                    elements.loaderQuery.textContent = info.job_title || '.NET Developer';
+                    elements.loaderStatus.textContent = status.status || 'Searching configured portals...';
+                    elements.searchModal.classList.remove('active');
+                    elements.scrapeLoader.style.display = 'flex';
+                    elements.dashboardContainer.style.display = 'none';
+                    state.scraping.active = true;
+                    state.scraping.startTime = Date.now() - (status.elapsed || 0) * 1000;
+                    state.scraping.timerInterval = setInterval(updateTimerDisplay, 1000);
+                    startPolling();
+                    return;
+                }
             }
-        });
+        } catch (error) {
+            console.warn('Could not check current scrape status:', error);
+        }
+
+        // Show saved results only when no initial or user-triggered scrape is running.
+        if (await tryLoadExistingData()) {
+            showDashboard();
+        } else {
+            showSearchModal();
+        }
     }
 
     // ─── SEARCH MODAL ─────────────────────────────────────────────
@@ -143,7 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const json = await res.json();
 
-            if (json.status === 'already_running') {
+            if (json.started === false) {
                 elements.loaderStatus.textContent = 'Scraper already running — waiting for results...';
             } else {
                 elements.loaderStatus.textContent = 'Scraping all job boards concurrently...';
@@ -162,16 +182,17 @@ document.addEventListener('DOMContentLoaded', () => {
     function startPolling() {
         if (state.scraping.pollInterval) clearInterval(state.scraping.pollInterval);
         state.scraping.pollInterval = setInterval(pollScrapeStatus, 2000);
+        pollScrapeStatus();
     }
 
     async function pollScrapeStatus() {
         try {
-            const res = await fetch('/api/status');
+            const res = await fetch('/api/status', { cache: 'no-store' });
             const status = await res.json();
 
             const elapsed = status.elapsed || 0;
-            const isRunning = status.running;
-            const statusText = status.status || 'scraping';
+            const isRunning = status.is_scraping ?? status.running ?? false;
+            const statusText = status.status || status.info?.status_message || 'scraping';
 
             // Animate the progress bar gradually
             if (isRunning) {
@@ -182,6 +203,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Done!
                 clearInterval(state.scraping.pollInterval);
                 state.scraping.pollInterval = null;
+                if (status.error) {
+                    stopTimer();
+                    showSearchModal();
+                    showToast(`Scraping failed: ${status.error}`);
+                    return;
+                }
 
                 elements.loaderProgressFill.style.width = '100%';
                 elements.loaderStatus.textContent = 'Scraping complete! Loading consolidated results...';

@@ -26,11 +26,12 @@ ACTIVE_PORT = 5000
 SCRAPING_INFO = {
     "is_scraping": False,
     "job_title": ".NET Developer",
-    "experience": "3-5 years",
+    "experience": "5-8 years",
     "max_age_days": 14,
     "location": "Pune, India",
     "start_time": 0,
-    "status_message": "Ready"
+    "status_message": "Ready",
+    "last_error": ""
 }
 
 def find_available_port(start_port=5000, max_attempts=20):
@@ -49,14 +50,15 @@ def trigger_background_scrape(params=None):
         params = params or {}
         SCRAPING_INFO["is_scraping"] = True
         SCRAPING_INFO["job_title"] = params.get("job_title") or ".NET Developer"
-        SCRAPING_INFO["experience"] = params.get("experience") or "3-5 years"
+        SCRAPING_INFO["experience"] = params.get("experience") or "5-8 years"
         try:
             SCRAPING_INFO["max_age_days"] = int(params.get("max_age_days", 14))
         except (ValueError, TypeError):
             SCRAPING_INFO["max_age_days"] = 14
         SCRAPING_INFO["location"] = params.get("location") or "Pune, India"
         SCRAPING_INFO["start_time"] = time.time()
-        SCRAPING_INFO["status_message"] = f"Scraping for {SCRAPING_INFO['job_title']}..."
+        SCRAPING_INFO["status_message"] = "Preparing all configured portal searches..."
+        SCRAPING_INFO["last_error"] = ""
 
     def worker():
         global IS_SCRAPING, SCRAPING_INFO
@@ -70,17 +72,23 @@ def trigger_background_scrape(params=None):
                     location=SCRAPING_INFO["location"],
                     max_age_days=SCRAPING_INFO["max_age_days"]
                 )
+                SCRAPING_INFO["status_message"] = (
+                    f"Searching {len(targets)} configured portal URLs in parallel..."
+                )
                 main.run_scraper_flow(custom_criteria=targets, max_age_days=SCRAPING_INFO["max_age_days"])
             else:
                 main.run_scraper_flow()
             print("[UI Trigger] Scraper run completed.")
         except Exception as e:
+            SCRAPING_INFO["last_error"] = str(e)
+            SCRAPING_INFO["status_message"] = "Scrape failed"
             print(f"[UI Trigger Error] Scraper execution failed: {e}")
         finally:
             with SCRAPING_LOCK:
                 IS_SCRAPING = False
                 SCRAPING_INFO["is_scraping"] = False
-                SCRAPING_INFO["status_message"] = "Completed"
+                if not SCRAPING_INFO["last_error"]:
+                    SCRAPING_INFO["status_message"] = "Completed"
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -105,11 +113,15 @@ class JobRadarHandler(SimpleHTTPRequestHandler):
             started = trigger_background_scrape(params)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             resp = {
                 "started": started,
                 "is_scraping": IS_SCRAPING,
+                "running": IS_SCRAPING,
+                "status": SCRAPING_INFO["status_message"],
+                "error": SCRAPING_INFO["last_error"],
                 "info": SCRAPING_INFO,
                 "message": f"Scraping started for {SCRAPING_INFO['job_title']}" if started else "Scraper is already active"
             }
@@ -126,6 +138,7 @@ class JobRadarHandler(SimpleHTTPRequestHandler):
         if path == "/api/jobs":
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             
@@ -143,6 +156,7 @@ class JobRadarHandler(SimpleHTTPRequestHandler):
                 data = export_jobs_to_json()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps(data).encode("utf-8"))
@@ -159,7 +173,7 @@ class JobRadarHandler(SimpleHTTPRequestHandler):
             if "job_title" in query_params or "title" in query_params:
                 params["job_title"] = query_params.get("job_title", query_params.get("title", [".NET Developer"]))[0]
             if "experience" in query_params or "exp" in query_params:
-                params["experience"] = query_params.get("experience", query_params.get("exp", ["3-5 years"]))[0]
+                params["experience"] = query_params.get("experience", query_params.get("exp", ["5-8 years"]))[0]
             if "max_age_days" in query_params or "days" in query_params:
                 try:
                     params["max_age_days"] = int(query_params.get("max_age_days", query_params.get("days", [14]))[0])
@@ -171,6 +185,7 @@ class JobRadarHandler(SimpleHTTPRequestHandler):
             started = trigger_background_scrape(params)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             resp = {
@@ -185,11 +200,15 @@ class JobRadarHandler(SimpleHTTPRequestHandler):
         elif path == "/api/status":
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             elapsed = int(time.time() - SCRAPING_INFO["start_time"]) if SCRAPING_INFO["is_scraping"] else 0
             resp = {
                 "is_scraping": IS_SCRAPING,
+                "running": IS_SCRAPING,
+                "status": SCRAPING_INFO["status_message"],
+                "error": SCRAPING_INFO["last_error"],
                 "info": SCRAPING_INFO,
                 "elapsed": elapsed
             }
@@ -234,7 +253,7 @@ def main():
     print("=" * 68)
     
     # 1. Sync & export latest Excel listings
-    print("[1/2] Syncing latest scraped job listings...")
+    print("[1/3] Syncing latest saved job listings...")
     export_jobs_to_json()
 
     # 2. Start Web Server
@@ -242,10 +261,19 @@ def main():
     url = f"http://localhost:{port}"
 
     server = ThreadingHTTPServer(('127.0.0.1', port), JobRadarHandler)
-    print(f"[2/2] Web UI is active and listening at:")
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    print(f"[2/3] Web UI is active and listening at:")
     print(f"\n      🚀  {url}  🚀\n")
-    print("Press Ctrl+C in terminal to stop the server.")
+    print("[3/3] Starting the initial search across all configured portals...")
     print("=" * 68)
+
+    trigger_background_scrape({
+        "job_title": ".NET Developer",
+        "experience": "5-8 years",
+        "max_age_days": 14,
+        "location": "Pune, India",
+    })
 
     try:
         webbrowser.open(url)
@@ -253,10 +281,13 @@ def main():
         print(f"[!] Could not automatically launch browser: {e}")
 
     try:
-        server.serve_forever()
+        while server_thread.is_alive():
+            server_thread.join(timeout=1)
     except KeyboardInterrupt:
         print("\n[!] Shutting down Job Radar UI server...")
+        server.shutdown()
         server.server_close()
+        server_thread.join()
         print("[+] Server stopped.")
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@ def create_sample():
     rows = []
 
     # ─── helpers ────────────────────────────────────────────────────────────────
-    def add(url, title=".NET Developer", exp="3-5 years", loc="Pune, India"):
+    def add(url, title=".NET Developer", exp="5-8 years", loc="Pune, India"):
         url = url.strip()
         if not url:
             return
@@ -192,4 +192,3 @@ def create_sample():
 
 if __name__ == "__main__":
     create_sample()
-
