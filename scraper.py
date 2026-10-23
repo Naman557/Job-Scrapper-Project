@@ -257,6 +257,65 @@ def get_linkedin_time_param(days):
         return "r2592000"
 
 
+def extract_posted_age_days(card):
+    """Return a card's explicit posting age in days, or None when unavailable."""
+    now = datetime.now(timezone.utc)
+
+    for time_element in card.find_all("time"):
+        date_value = time_element.get("datetime", "").strip()
+        if date_value:
+            try:
+                posted_at = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+                if posted_at.tzinfo is None:
+                    posted_at = posted_at.replace(tzinfo=timezone.utc)
+                return max(0, (now - posted_at.astimezone(timezone.utc)).total_seconds() / 86400)
+            except ValueError:
+                pass
+
+        age_text = time_element.get_text(" ", strip=True).lower()
+        age = parse_relative_posted_age(age_text)
+        if age is not None:
+            return age
+
+    return parse_relative_posted_age(card.get_text(" ", strip=True).lower())
+
+
+def parse_relative_posted_age(text):
+    """Parse common relative posting labels such as '4 months ago'."""
+    if re.search(r"\b(just posted|today|minutes? ago|hours? ago)\b", text):
+        return 0
+    if re.search(r"\byesterday\b", text):
+        return 1
+
+    match = re.search(
+        r"\b(?:posted|reposted)?\s*(\d+)\+?\s*"
+        r"(minute|hour|day|week|month|year)s?\s+ago\b",
+        text,
+    )
+    if not match:
+        return None
+
+    amount = int(match.group(1))
+    unit = match.group(2)
+    days_per_unit = {
+        "minute": 1 / 1440,
+        "hour": 1 / 24,
+        "day": 1,
+        "week": 7,
+        "month": 30.4375,
+        "year": 365.25,
+    }
+    return amount * days_per_unit[unit]
+
+
+def is_within_max_age(posted_age_days, max_age_days=None):
+    """Reject listings with an explicit age beyond the configured cutoff."""
+    if posted_age_days is None:
+        return True
+    age_limit = config.MAX_AGE_DAYS if max_age_days is None else max_age_days
+    return posted_age_days <= age_limit
+
+
 # ---------------------------------------------------------------------------
 # Sandbox Scraper (RealPython Fake Jobs)
 # ---------------------------------------------------------------------------
@@ -370,6 +429,14 @@ def scrape_linkedin_guest_api(search_item, session=None):
 
             new_cards = 0
             for card in cards:
+                posted_age_days = extract_posted_age_days(card)
+                if not is_within_max_age(posted_age_days):
+                    print(
+                        f"[Date Filter] LinkedIn: rejected listing posted "
+                        f"{posted_age_days:.0f} days ago (limit: {config.MAX_AGE_DAYS} days)."
+                    )
+                    continue
+
                 title_elem = card.find(["h3", "h2"], class_=re.compile("job-search-card__title|base-search-card__title|title"))
                 company_elem = card.find(["h4", "h3", "span"], class_=re.compile("job-search-card__subtitle|base-search-card__subtitle|subtitle"))
                 loc_elem = card.find("span", class_=re.compile("job-search-card__location|location"))
@@ -396,6 +463,7 @@ def scrape_linkedin_guest_api(search_item, session=None):
                     "company": company,
                     "location": location,
                     "experience": search_item.get("experience", "3-5 years"),
+                    "posted_age_days": posted_age_days,
                     "apply_link": apply_link,
                     "recruiter_contact": "Refer to Apply Link"
                 }
@@ -471,6 +539,14 @@ def scrape_linkedin_public(driver, search_item):
         new_cards_found = 0
         for card in job_cards:
             try:
+                posted_age_days = extract_posted_age_days(card)
+                if not is_within_max_age(posted_age_days):
+                    print(
+                        f"[Date Filter] LinkedIn: rejected listing posted "
+                        f"{posted_age_days:.0f} days ago (limit: {config.MAX_AGE_DAYS} days)."
+                    )
+                    continue
+
                 title_elem = card.find("h3", class_=re.compile("job-search-card__title|base-search-card__title"))
                 title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -499,6 +575,7 @@ def scrape_linkedin_public(driver, search_item):
                     "company": company,
                     "location": location,
                     "experience": search_item.get("experience", "3-5 years"),
+                    "posted_age_days": posted_age_days,
                     "apply_link": apply_link,
                     "recruiter_contact": "Refer to Apply Link"
                 }
@@ -577,6 +654,10 @@ def scrape_indeed_public(driver, search_item):
         new_cards_found = 0
         for card in job_cards:
             try:
+                posted_age_days = extract_posted_age_days(card)
+                if not is_within_max_age(posted_age_days):
+                    continue
+
                 title_elem = card.find("h2", class_=re.compile("jobTitle"))
                 title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -602,6 +683,7 @@ def scrape_indeed_public(driver, search_item):
                     "company": company,
                     "location": location_val,
                     "experience": search_item.get("experience", "Not Specified"),
+                    "posted_age_days": posted_age_days,
                     "apply_link": apply_link,
                     "recruiter_contact": "Refer to Apply Link"
                 }
@@ -653,7 +735,7 @@ def scrape_remoteok(search_item, session=None):
             if date_str:
                 try:
                     pub_dt = datetime.fromisoformat(date_str).astimezone(timezone.utc)
-                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
+                    if (now - pub_dt).total_seconds() > config.MAX_AGE_DAYS * 86400:
                         continue
                 except Exception:
                     pass
@@ -719,7 +801,7 @@ def scrape_weworkremotely(search_item, session=None):
             if pub_date_text:
                 try:
                     pub_dt = parsedate_to_datetime(pub_date_text)
-                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
+                    if (now - pub_dt).total_seconds() > config.MAX_AGE_DAYS * 86400:
                         continue
                 except Exception:
                     pass
@@ -770,7 +852,7 @@ def scrape_upwork_rss(search_item, session=None):
             if pub_date_text:
                 try:
                     pub_dt = parsedate_to_datetime(pub_date_text)
-                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
+                    if (now - pub_dt).total_seconds() > config.MAX_AGE_DAYS * 86400:
                         continue
                 except Exception:
                     pass
@@ -832,7 +914,7 @@ def scrape_remotive(search_item, session=None):
             if pub_date_text:
                 try:
                     pub_dt = parsedate_to_datetime(pub_date_text)
-                    if (now - pub_dt).days > config.MAX_AGE_DAYS:
+                    if (now - pub_dt).total_seconds() > config.MAX_AGE_DAYS * 86400:
                         continue
                 except Exception:
                     pass
@@ -882,6 +964,10 @@ def scrape_naukri(driver, search_item):
 
     for card in cards:
         try:
+            posted_age_days = extract_posted_age_days(card)
+            if not is_within_max_age(posted_age_days):
+                continue
+
             title_elem = card.find("a", class_=re.compile("title|jobTitle")) or card.find("h2")
             title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -909,6 +995,7 @@ def scrape_naukri(driver, search_item):
                 "company": company,
                 "location": location,
                 "experience": search_item.get("experience", "3-5 years"),
+                "posted_age_days": posted_age_days,
                 "apply_link": apply_link,
                 "recruiter_contact": "Refer to Apply Link"
             }
@@ -944,6 +1031,10 @@ def scrape_foundit(driver, search_item):
 
     for card in cards:
         try:
+            posted_age_days = extract_posted_age_days(card)
+            if not is_within_max_age(posted_age_days):
+                continue
+
             title_elem = card.find("h3") or card.find("a", class_=re.compile("job-title"))
             title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -971,6 +1062,7 @@ def scrape_foundit(driver, search_item):
                 "company": company,
                 "location": location,
                 "experience": search_item.get("experience", "3-5 years"),
+                "posted_age_days": posted_age_days,
                 "apply_link": apply_link,
                 "recruiter_contact": "Refer to Apply Link"
             }
@@ -1006,6 +1098,10 @@ def scrape_shine(driver, search_item):
 
     for card in cards:
         try:
+            posted_age_days = extract_posted_age_days(card)
+            if not is_within_max_age(posted_age_days):
+                continue
+
             title_elem = card.find("h3") or card.find("a", class_=re.compile("jobTitle|job-title"))
             title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -1033,6 +1129,7 @@ def scrape_shine(driver, search_item):
                 "company": company,
                 "location": location,
                 "experience": search_item.get("experience", "3-5 years"),
+                "posted_age_days": posted_age_days,
                 "apply_link": apply_link,
                 "recruiter_contact": "Refer to Apply Link"
             }
@@ -1068,6 +1165,10 @@ def scrape_timesjobs(driver, search_item):
 
     for card in cards:
         try:
+            posted_age_days = extract_posted_age_days(card)
+            if not is_within_max_age(posted_age_days):
+                continue
+
             title_elem = card.find("h2") or card.find("a", class_=re.compile("jobTitle"))
             title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -1097,6 +1198,7 @@ def scrape_timesjobs(driver, search_item):
                 "company": company,
                 "location": location,
                 "experience": search_item.get("experience", "3-5 years"),
+                "posted_age_days": posted_age_days,
                 "apply_link": apply_link,
                 "recruiter_contact": "Refer to Apply Link"
             }
@@ -1134,6 +1236,10 @@ def scrape_glassdoor(driver, search_item):
 
     for card in cards:
         try:
+            posted_age_days = extract_posted_age_days(card)
+            if not is_within_max_age(posted_age_days):
+                continue
+
             title_elem = card.find("a", class_=re.compile("jobTitle|JobCard_jobTitle"))
             title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -1161,6 +1267,7 @@ def scrape_glassdoor(driver, search_item):
                 "company": company,
                 "location": location,
                 "experience": search_item.get("experience", "3-5 years"),
+                "posted_age_days": posted_age_days,
                 "apply_link": apply_link,
                 "recruiter_contact": "Refer to Apply Link"
             }
@@ -1196,6 +1303,10 @@ def scrape_wellfound(driver, search_item):
 
     for card in cards:
         try:
+            posted_age_days = extract_posted_age_days(card)
+            if not is_within_max_age(posted_age_days):
+                continue
+
             title_elem = card.find("a", class_=re.compile("JobListing_title|title"))
             title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -1223,6 +1334,7 @@ def scrape_wellfound(driver, search_item):
                 "company": company,
                 "location": location,
                 "experience": search_item.get("experience", "Not Specified"),
+                "posted_age_days": posted_age_days,
                 "apply_link": apply_link,
                 "recruiter_contact": "Refer to Apply Link"
             }
@@ -1292,6 +1404,10 @@ def scrape_generic_selenium(driver, search_item):
 
     for card in cards:
         try:
+            posted_age_days = extract_posted_age_days(card)
+            if not is_within_max_age(posted_age_days):
+                continue
+
             title_elem = card.find(["h2", "h3", "h4", "a"])
             title = title_elem.text.strip() if title_elem else "N/A"
 
@@ -1316,6 +1432,7 @@ def scrape_generic_selenium(driver, search_item):
                 "company": urllib.parse.urlparse(url).netloc,
                 "location": search_item.get("location", "India"),
                 "experience": search_item.get("experience", "Not Specified"),
+                "posted_age_days": posted_age_days,
                 "apply_link": apply_link,
                 "recruiter_contact": "Refer to Apply Link"
             }
@@ -1350,19 +1467,35 @@ def scrape_google_search(driver, search_item):
             h3 = card.find("h3")
             if not h3:
                 continue
-            title = h3.text.strip()
+            title = h3.get_text(" ", strip=True)
 
-            a_tag = card.find("a", href=True)
+            # The first anchor in a Google card may be a related-search link;
+            # use the anchor wrapping the result title so the URL stays paired
+            # with the job title in both the UI and CSV export.
+            a_tag = h3.find_parent("a", href=True)
             if not a_tag:
                 continue
             link = a_tag["href"]
 
-            if link.startswith("/url?"):
-                parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
-                if "q" in parsed_q and parsed_q["q"]:
-                    link = parsed_q["q"][0]
+            parsed_link = urllib.parse.urlsplit(urllib.parse.urljoin("https://www.google.com", link))
+            if parsed_link.hostname and parsed_link.hostname.endswith("google.com"):
+                redirect_params = urllib.parse.parse_qs(parsed_link.query)
+                for param in ("q", "url", "uddg"):
+                    candidate = redirect_params.get(param, [None])[0]
+                    if candidate and candidate.startswith(("http://", "https://")):
+                        link = candidate
+                        break
+                else:
+                    # Search/refinement links are not job applications. Google
+                    # /goto links remain usable browser redirects when their
+                    # destination is opaque to the scraper.
+                    if parsed_link.path != "/goto":
+                        continue
+                    link = urllib.parse.urlunsplit(parsed_link)
+            else:
+                link = urllib.parse.urlunsplit(parsed_link)
 
-            if not link.startswith("http") or "google.com" in link:
+            if not link.startswith(("http://", "https://")):
                 continue
 
             if link in seen:
@@ -1371,13 +1504,21 @@ def scrape_google_search(driver, search_item):
 
             snippet_elem = card.find("div", class_=re.compile("VwiCwb|IsZvec|aCOpRe"))
             snippet = snippet_elem.text.strip() if snippet_elem else ""
+            posted_age_days = extract_posted_age_days(card)
+            if posted_age_days is None:
+                posted_age_days = parse_relative_posted_age(snippet.lower())
+            if not is_within_max_age(posted_age_days):
+                continue
 
+            result_host = urllib.parse.urlsplit(link).hostname or ""
+            company = result_host.removeprefix("www.") if "google.com" not in result_host else "Google result"
             job = {
                 "portal": "Google Search",
                 "title": title,
-                "company": "Aggregated via Google",
+                "company": company,
                 "location": search_item.get("location", "India"),
                 "experience": search_item.get("experience", "Not Specified"),
+                "posted_age_days": posted_age_days,
                 "apply_link": link,
                 "recruiter_contact": f"Snippet: {snippet[:100]}..." if snippet else "Refer to Apply Link"
             }
@@ -1388,9 +1529,6 @@ def scrape_google_search(driver, search_item):
                 break
         except Exception:
             continue
-
-    if not results:
-        return scrape_generic_selenium(driver, search_item)
 
     return results
 
@@ -1492,6 +1630,14 @@ def scrape_jobs(search_items, on_batch_callback=None):
         with callback_lock:
             for j in batch_jobs:
                 if not is_india_eligible(j):
+                    continue
+                posted_age_days = j.get("posted_age_days")
+                if posted_age_days is not None and not is_within_max_age(posted_age_days):
+                    print(
+                        f"[Date Filter] {j.get('portal', 'Job board')}: rejected listing "
+                        f"posted {posted_age_days:.0f} days ago "
+                        f"(limit: {config.MAX_AGE_DAYS} days)."
+                    )
                     continue
                 # Canonical dedup key
                 link = j.get("apply_link", "").strip().lower()

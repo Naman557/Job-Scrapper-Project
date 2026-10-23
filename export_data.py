@@ -80,6 +80,11 @@ def export_jobs_to_json(output_path=os.path.join("ui", "data", "jobs.json"), job
                 apply_link = clean_val(row.get("apply_link"), "#")
                 recruiter = clean_val(row.get("recruiter_contact"), "Refer to Apply Link")
                 job_type = clean_val(row.get("job_type"), default_type).lower()
+                posted_age_days = row.get("posted_age_days")
+                if pd.isna(posted_age_days):
+                    posted_age_days = None
+                elif posted_age_days is not None:
+                    posted_age_days = float(posted_age_days)
                 
                 all_jobs.append({
                     "id": f"job-{len(all_jobs) + 1}",
@@ -90,7 +95,8 @@ def export_jobs_to_json(output_path=os.path.join("ui", "data", "jobs.json"), job
                     "experience": experience,
                     "apply_link": apply_link,
                     "recruiter_contact": recruiter,
-                    "job_type": job_type
+                    "job_type": job_type,
+                    "posted_age_days": posted_age_days
                 })
         except Exception as e:
             print(f"[!] Warning reading '{file_path}': {e}")

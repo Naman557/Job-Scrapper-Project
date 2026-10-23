@@ -411,6 +411,26 @@ document.addEventListener('DOMContentLoaded', () => {
         return 6;
     }
 
+    function formatPostedAge(value) {
+        if (value === null || value === undefined || value === '') return '';
+        const days = Number(value);
+        if (!Number.isFinite(days)) return '';
+        if (days < 1) return 'Posted within 24 hours';
+        if (days < 2) return 'Posted 1 day ago';
+        if (days < 30) return `Posted ${Math.floor(days)} days ago`;
+        if (days < 365) return `Posted ${Math.floor(days / 30.4375)} months ago`;
+        return `Posted ${Math.floor(days / 365.25)} years ago`;
+    }
+
+    function getApplyLink(job) {
+        const link = String(job.apply_link || '').trim();
+        return /^https?:\/\/\S+$/i.test(link) ? link : '';
+    }
+
+    function csvCell(value) {
+        return `"${String(value ?? '').replace(/"/g, '""')}"`;
+    }
+
     // ─── APPLY FILTERS ───────────────────────────────────────────
     function applyFilters() {
         const { search, portal, type, location, sortBy } = state.activeFilters;
@@ -486,8 +506,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const html = state.filteredJobs.map(job => {
             const portalClass = getPortalBadgeClass(job.portal);
             const portalName = formatPortalName(job.portal);
-            const isApplyValid = job.apply_link && job.apply_link !== '#' && job.apply_link !== 'N/A';
+            const applyLink = getApplyLink(job);
+            const isApplyValid = Boolean(applyLink);
             const typeLabel = (job.job_type || 'permanent').toUpperCase();
+            const postedAge = formatPostedAge(job.posted_age_days);
 
             return `
                 <div class="job-card" data-id="${job.id}">
@@ -525,11 +547,12 @@ document.addEventListener('DOMContentLoaded', () => {
                                 </svg>
                                 <span>${escapeHtml(job.recruiter_contact)}</span>
                             </div>
+                            ${postedAge ? `<div class="spec-item"><span>${escapeHtml(postedAge)}</span></div>` : ''}
                         </div>
                     </div>
                     <div class="card-footer">
                         ${isApplyValid ? `
-                            <a href="${escapeHtml(job.apply_link)}" target="_blank" rel="noopener noreferrer" class="btn-apply">
+                            <a href="${escapeHtml(applyLink)}" target="_blank" rel="noopener noreferrer" class="btn-apply">
                                 <span>Direct Apply</span>
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                     <line x1="7" y1="17" x2="17" y2="7"></line>
@@ -539,7 +562,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ` : `
                             <span class="btn-apply" style="opacity: 0.5; cursor: not-allowed;">No Direct Link</span>
                         `}
-                        <button class="btn-icon-only copy-link-btn" data-link="${escapeHtml(job.apply_link)}" title="Copy application link">
+                        <button class="btn-icon-only copy-link-btn" data-link="${escapeHtml(applyLink)}" title="Copy application link">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -559,7 +582,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const rows = state.filteredJobs.map(job => {
             const portalClass = getPortalBadgeClass(job.portal);
             const portalName = formatPortalName(job.portal);
-            const isApplyValid = job.apply_link && job.apply_link !== '#' && job.apply_link !== 'N/A';
+            const applyLink = getApplyLink(job);
+            const isApplyValid = Boolean(applyLink);
 
             return `
                 <tr>
@@ -568,10 +592,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td style="color: #93c5fd;">${escapeHtml(job.company)}</td>
                     <td>${escapeHtml(job.location)}</td>
                     <td>${escapeHtml(job.experience)}</td>
+                    <td>${escapeHtml(formatPostedAge(job.posted_age_days) || 'Not provided')}</td>
                     <td style="font-size: 0.8rem; color: #94a3b8;">${escapeHtml(job.recruiter_contact)}</td>
                     <td style="text-align: right;">
                         ${isApplyValid ? `
-                            <a href="${escapeHtml(job.apply_link)}" target="_blank" rel="noopener noreferrer" class="btn-apply" style="padding: 5px 12px; font-size: 0.78rem;">
+                            <a href="${escapeHtml(applyLink)}" target="_blank" rel="noopener noreferrer" class="btn-apply" style="padding: 5px 12px; font-size: 0.78rem;">
                                 Apply
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="7" y1="17" x2="17" y2="7"></line>
@@ -616,21 +641,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const headers = ['Portal', 'Title', 'Company', 'Location', 'Experience', 'Recruiter Contact', 'Job Type', 'Apply Link'];
-        const csvRows = [headers.join(',')];
+        const headers = ['Portal', 'Title', 'Company', 'Location', 'Experience', 'Posted', 'Recruiter Contact', 'Job Type', 'Apply Link'];
+        const csvRows = [headers.map(csvCell).join(',')];
 
         state.filteredJobs.forEach(j => {
             const row = [
-                `"${(j.portal || '').replace(/"/g, '""')}"`,
-                `"${(j.title || '').replace(/"/g, '""')}"`,
-                `"${(j.company || '').replace(/"/g, '""')}"`,
-                `"${(j.location || '').replace(/"/g, '""')}"`,
-                `"${(j.experience || '').replace(/"/g, '""')}"`,
-                `"${(j.recruiter_contact || '').replace(/"/g, '""')}"`,
-                `"${(j.job_type || 'permanent').replace(/"/g, '""')}"`,
-                `"${(j.apply_link || '').replace(/"/g, '""')}"`
+                j.portal || '',
+                j.title || '',
+                j.company || '',
+                j.location || '',
+                j.experience || '',
+                formatPostedAge(j.posted_age_days),
+                j.recruiter_contact || '',
+                j.job_type || 'permanent',
+                getApplyLink(j)
             ];
-            csvRows.push(row.join(','));
+            csvRows.push(row.map(csvCell).join(','));
         });
 
         const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvRows.join('\n'));
